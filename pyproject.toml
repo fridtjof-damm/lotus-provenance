@@ -35,6 +35,11 @@ dependencies = [
     "boto3>=1.41.0",
     "sqlalchemy>=2.0.44",
     "qdrant-client>=1.16.0",
+    "matplotlib>=3.10.8",
+    "pytest>=9.0.1",
+    "boto3>=1.41.0",
+    "sqlalchemy>=2.0.44",
+    "qdrant-client>=1.16.0",
     "duckdb>=1.4.4",
     "plotly>=6.5.2",
 ]
