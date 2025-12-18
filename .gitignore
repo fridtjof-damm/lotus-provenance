@@ -11,4 +11,5 @@ docs/_build
 .idea/
 
 test_env/
+.venv
 

@@ -31,6 +31,10 @@ dependencies = [
     "tiktoken>=0.7.0,<1.0.0",
     "tqdm>=4.66.4,<5.0.0",
     "pydantic>=2.11.7,<3.0.0",
+    "pytest>=9.0.1",
+    "boto3>=1.41.0",
+    "sqlalchemy>=2.0.44",
+    "qdrant-client>=1.16.0",
 ]
 
 [project.optional-dependencies]
