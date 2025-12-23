@@ -219,6 +219,7 @@ class SemMapDataframe:
         postprocessor: Callable[[list[str], lotus.models.LM, bool], SemanticMapPostprocessOutput] = map_postprocess,
         return_explanations: bool = False,
         return_raw_outputs: bool = False,
+        return_provenance: bool = False,
         suffix: str = "_map",
         examples: pd.DataFrame | None = None,
         strategy: ReasoningStrategy | None = None,
@@ -271,6 +272,16 @@ class SemMapDataframe:
 
         new_df = self._obj.copy()
         new_df[suffix] = output.outputs
+        if return_provenance:
+            # check for provenance columns from upstream operators
+            existing_prov = [c for c in self._obj.columns if "provenance_id" in c]
+
+            if existing_prov:
+                # inherit provenance id from immediate predecessor operator, assuming provenance columns in operator chain order
+                new_df["provenance_id" + suffix] = self._obj[existing_prov[-1]]
+            else:
+                new_df["provenance_id" + suffix] = self._obj.index
+
         if return_explanations:
             new_df["explanation" + suffix] = output.explanations
         if return_raw_outputs:
