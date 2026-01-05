@@ -212,6 +212,7 @@ class SemExtractDataFrame:
         progress_bar_desc: str = "Extracting",
         return_explanations: bool = False,
         strategy: ReasoningStrategy | None = None,
+        return_provenance: bool = False,
     ) -> pd.DataFrame:
         if lotus.settings.lm is None:
             raise ValueError(
@@ -242,10 +243,16 @@ class SemExtractDataFrame:
         for i, output_dict in enumerate(out.outputs):
             if i >= len(indices):
                 break
+            current_idx = indices[i]
             for key, value in output_dict.items():
                 if key not in new_df.columns:
                     new_df[key] = None
                 new_df.loc[indices[i], key] = value
+
+            if return_provenance:
+                if "provenance_id" not in new_df.columns:
+                    new_df["provenance_id"] = pd.NA
+                new_df.loc[current_idx, "provenance_id"] = current_idx
 
         if return_raw_outputs:
             new_df["raw_output"] = out.raw_outputs
