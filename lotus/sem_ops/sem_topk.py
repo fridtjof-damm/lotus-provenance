@@ -720,7 +720,7 @@ class SemTopKDataframe:
             pd.DataFrame | tuple[pd.DataFrame, dict[str, Any]]: The top-K results
                 for the group, optionally with statistics.
         """
-        group, user_instruction, K, method, strategy, group_by, cascade_threshold, return_stats = args
+        group, user_instruction, K, method, strategy, group_by, cascade_threshold, return_stats, provenance, provenance_col = args
         return group.sem_topk(
             user_instruction,
             K,
@@ -729,6 +729,8 @@ class SemTopKDataframe:
             group_by=None,
             cascade_threshold=cascade_threshold,
             return_stats=return_stats,
+            provenance=provenance,
+            provenance_col=provenance_col,
         )
 
     @operator_cache
@@ -743,6 +745,8 @@ class SemTopKDataframe:
         return_stats: bool = False,
         safe_mode: bool = False,
         return_explanations: bool = False,
+        provenance: bool = False,         
+        provenance_col: str | None = None,
     ) -> pd.DataFrame | tuple[pd.DataFrame, dict[str, Any]]:
         model = lotus.settings.lm
         if model is None:
@@ -763,7 +767,7 @@ class SemTopKDataframe:
         if group_by:
             grouped = self._obj.groupby(group_by)
             group_args = [
-                (group, user_instruction, K, method, strategy, None, cascade_threshold, return_stats)
+                (group, user_instruction, K, method, strategy, None, cascade_threshold, return_stats, provenance, provenance_col)
                 for _, group in grouped
             ]
 
@@ -786,6 +790,14 @@ class SemTopKDataframe:
             self._obj = self._obj.sem_index(col_name, f"{col_name}_lotus_index").sem_search(
                 col_name, user_instruction, len(self._obj)
             )
+        
+        # Track provenance before reindexing/resetting
+        original_ids = None
+        if provenance:
+            if provenance_col and provenance_col in self._obj.columns:
+                original_ids = self._obj[provenance_col].values
+            else:
+                original_ids = self._obj.index.values
 
         multimodal_data = task_instructions.df2multimodal_info(self._obj, col_li)
         lotus.logger.debug(f"multimodal_data: {multimodal_data}")
@@ -825,6 +837,14 @@ class SemTopKDataframe:
         new_df = self._obj.reset_index(drop=True)
         new_df = new_df.reindex(output.indexes).reset_index(drop=True)
         new_df = new_df.head(K)
+        
+        # assign provenance
+        if provenance and original_ids is not None:
+            actual_k = len(new_df)
+            sorted_provenance = [original_ids[i] for i in output.indexes[:actual_k]]
+            
+            col_name = provenance_col if provenance_col else "provenance_id"
+            new_df[col_name] = sorted_provenance
 
         if return_explanations and strategy == ReasoningStrategy.ZS_COT:
             explanations = []
