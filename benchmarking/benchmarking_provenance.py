@@ -75,7 +75,7 @@ def run_extract_filter_movie_reviews(db_path, use_prov=False, debug=False):
     Depends on sqlite file in created in db_examples/sql_extract_filter.py
     """
     # setup
-    query = "SELECT * FROM movie_reviews LIMIT 100;"
+    query = "SELECT * FROM movie_reviews LIMIT 250;"
     df = DataConnector.load_from_db(db_path, query=query)
     set_becnhmark_env()
 
