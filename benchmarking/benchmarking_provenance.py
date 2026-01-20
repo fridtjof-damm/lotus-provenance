@@ -1,4 +1,5 @@
 import gc
+import random
 import time
 import tracemalloc
 from functools import wraps
@@ -15,38 +16,47 @@ def benchmark_provenance_overhead(func):
         debug = kwargs.pop("debug", True)
         results = {}
 
-        for mode in ["vanilla", "provenance"]:
-            # set provenance flag based on mode
-            prov_flag = True if mode == "provenance" else False
+        modes = ["vanilla", "provenance"]
+        random.shuffle(modes)
 
-            # Reset and start tracing
+        for mode in modes:
+            # set provenance flag based on mode
+            prov_flag = mode == "provenance"
             gc.collect()
             tracemalloc.start()
-            baseline_mem, _ = tracemalloc.get_traced_memory()
-            start_time = time.perf_counter()
+
+            start_wall = time.perf_counter()
+            start_cpu = time.process_time()
 
             # Execute the use case pipeline and pass the provenance flag
             func(*args, **kwargs, use_prov=prov_flag)
 
-            # stop timing and memory tracking
-            end_time = time.perf_counter()
+            end_cpu = time.process_time()
+            end_wall = time.perf_counter()
             _, peak_mem = tracemalloc.get_traced_memory()
             tracemalloc.stop()
-            peak = peak_mem - baseline_mem
 
-            results[mode] = {"time_sec": end_time - start_time, "peak_mem_mb": peak / 10**6}
+            results[mode] = {
+                "wall_sec": end_wall - start_wall,
+                "cpu_sec": end_cpu - start_cpu,
+                "mem_mb": peak_mem / 10**6,
+            }
 
         # Calculate overheads
-        time_overhead = (results["provenance"]["time_sec"] / results["vanilla"]["time_sec"]) - 1
-        mem_overhead = (results["provenance"]["peak_mem_mb"] / results["vanilla"]["peak_mem_mb"]) - 1
+        wall_time_oh = (results["provenance"]["wall_sec"] / results["vanilla"]["wall_sec"]) - 1
+        cpu_time_oh = (results["provenance"]["cpu_sec"] / results["vanilla"]["cpu_sec"]) - 1
+        mem_oh = (results["provenance"]["mem_mb"] / results["vanilla"]["mem_mb"]) - 1
 
         if debug:
             print(f"\n---- Benchmark: {func.__name__} ----")
             print(
-                f"Time: Vanilla LOTUS {results['vanilla']['time_sec']:.4f}s | Provenance LOTUS {results['provenance']['time_sec']:.4f}s | Overhead: {time_overhead:+.2%}"
+                f"Wall Time: Vanilla LOTUS {results['vanilla']['wall_sec']:.4f}s | Provenance LOTUS {results['provenance']['wall_sec']:.4f}s | Overhead: {wall_time_oh:+.2%}"
             )
             print(
-                f"Memory: Vanilla LOTUS {results['vanilla']['peak_mem_mb']:.2f}MB | Provenance LOTUS {results['provenance']['peak_mem_mb']:.2f}MB | Overhead: {mem_overhead:+.2%}"
+                f"CPU Time: Vanilla LOTUS {results['vanilla']['cpu_sec']:.4f}s | Provenance LOTUS {results['provenance']['cpu_sec']:.4f}s | Overhead: {cpu_time_oh:+.2%}"
+            )
+            print(
+                f"Memory: Vanilla LOTUS {results['vanilla']['mem_mb']:.2f}MB | Provenance LOTUS {results['provenance']['mem_mb']:.2f}MB | Overhead: {mem_oh:+.2%}"
             )
 
         return results
@@ -54,11 +64,13 @@ def benchmark_provenance_overhead(func):
     return wrapper
 
 
-def set_becnhmark_env():
+def set_benchmark_env():
     """Configure LOTUS specific benchmarking settings."""
     # disable caching
     lotus.settings.configure(enable_cache=False)
-    lm = lotus.models.LM(model="gpt-4o-mini")
+    # lm = lotus.models.LM(model="ollama/llama3.1:8b")
+    lm = lotus.models.LM(model="ollama/gemma:7b")
+    # lm = lotus.models.LM(model="gpt-4.1-nano")
     lotus.settings.configure(lm=lm)
 
 
@@ -75,9 +87,8 @@ def run_extract_filter_movie_reviews(db_path, use_prov=False, debug=False):
     Depends on sqlite file in created in db_examples/sql_extract_filter.py
     """
     # setup
-    query = "SELECT * FROM movie_reviews LIMIT 250;"
+    query = "SELECT * FROM movie_reviews LIMIT 50;"
     df = DataConnector.load_from_db(db_path, query=query)
-    set_becnhmark_env()
 
     # define extract parameters
     input_cols = ["reviewText"]
@@ -96,4 +107,5 @@ def run_extract_filter_movie_reviews(db_path, use_prov=False, debug=False):
 # TODO: Add more use case functions here following the same pattern
 
 if __name__ == "__main__":
+    set_benchmark_env()
     run_extract_filter_movie_reviews("sqlite:///../examples/db_examples/example_movie_reviews.db", debug=True)
