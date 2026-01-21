@@ -9,6 +9,8 @@ from datetime import datetime
 from functools import wraps
 from pathlib import Path
 
+import pandas as pd
+
 import lotus
 from lotus.data_connectors import DataConnector
 
@@ -123,7 +125,7 @@ def print_summary(func_name, stats, n_iterations):
 
 
 @benchmark_provenance_overhead(usecase_id="UC-01", n_iterations=10)
-def run_extract_filter_movie_reviews(db_path, use_prov=False, debug=False):
+def extract_filter_movie_reviews(db_path, use_prov=False, debug=False):
     """
     01:
     SQL Use case with sem_extract and sem_filter on movie reviews dataset.
@@ -132,7 +134,7 @@ def run_extract_filter_movie_reviews(db_path, use_prov=False, debug=False):
     Source: https://www.kaggle.com/datasets/andrezaza/clapper-massive-rotten-tomatoes-movies-and-reviews
     """
     # setup
-    query = "SELECT * FROM movie_reviews LIMIT 100;"
+    query = "SELECT * FROM movie_reviews LIMIT 10;"
     df = DataConnector.load_from_db(db_path, query=query)
 
     # define extract parameters
@@ -149,9 +151,49 @@ def run_extract_filter_movie_reviews(db_path, use_prov=False, debug=False):
         print(filtered_extracted_df.head())
 
 
+@benchmark_provenance_overhead(usecase_id="UC-02", n_iterations=10)
+def extract_filter_map_join_movie_reviews(db_path, use_prov=False, debug=False):
+    """
+    02:
+
+    """
+    query = "SELECT * FROM movie_reviews LIMIT 10;"
+    df = DataConnector.load_from_db(db_path, query=query)
+
+    input_cols = ["reviewText"]
+    output_cols = {"key_aspects": "The key aspects of the movie plot discussed in the review."}
+    extracted_df = df.sem_extract(input_cols, output_cols, return_provenance=use_prov)
+
+    mapped_df = extracted_df.sem_map(
+        "Based on {key_aspects}, describe the primary setting of the movie.",
+        suffix="setting",
+        return_provenance=use_prov,
+    )
+    genres_df = {
+        "genre": ["Science Fiction", "Drama", "Action", "Horror", "Documentary"],
+        "description": [
+            "Futuristic and high-tech",
+            "Emotional and human-centric",
+            "High energy and stunts",
+            "Scary and dark",
+            "Real-world facts",
+        ],
+    }
+    genres_df = pd.DataFrame(genres_df)
+    joined_df = mapped_df.sem_join(
+        genres_df,
+        "The {setting} is typical for a {genre} movie because it is {description}",
+        return_provenance=use_prov,
+    )
+
+    if debug:
+        print(joined_df.head())
+
+
 # TODO: Add more use case functions here following the same pattern
 
 if __name__ == "__main__":
     set_benchmark_env()
     # benchmark use case 01 -> "UC-01" as id
-    run_extract_filter_movie_reviews("sqlite:///../examples/db_examples/example_movie_reviews.db", debug=True)
+    extract_filter_movie_reviews("sqlite:///../examples/db_examples/example_movie_reviews.db", debug=True)
+    extract_filter_map_join_movie_reviews("sqlite:///../examples/db_examples/example_movie_reviews.db", debug=True)

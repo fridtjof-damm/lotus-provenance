@@ -6,6 +6,12 @@ from lotus.models import LM
 
 conn = sqlite3.connect("example_movies.db")
 cursor = conn.cursor()
+"""
+
+Loan Data:
+Bondora: https://www.kaggle.com/datasets/sid321axn/bondora-peer-to-peer-lending-loan-data?resource=download
+"""
+
 
 # Create the table
 cursor.execute("""
