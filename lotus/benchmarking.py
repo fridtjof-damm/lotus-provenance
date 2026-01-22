@@ -16,15 +16,22 @@ from lotus.models import LM
 # -----------------------------
 # CONFIG
 # -----------------------------
-MODEL_NAME = os.getenv("LOTUS_BENCH_MODEL", "gpt-4.1-nano")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")  # must be set if using OpenAI models
-RUNS_PER_CASE = int(os.getenv("LOTUS_BENCH_RUNS", "3"))  # repetitions per mode per case
-SQLITE_PATH = os.getenv("LOTUS_BENCH_SQLITE", "bench_lotus.db")
+# ✅ Ollama model by default
+MODEL_NAME = os.getenv("LOTUS_BENCH_MODEL", "ollama/llama3.2:3b")
+
+# ✅ For OpenAI models (optional): set OPENAI_API_KEY + MODEL_NAME=gpt-...
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+RUNS_PER_CASE = int(os.getenv("LOTUS_BENCH_RUNS", "3"))          # repetitions per mode per case
+SQLITE_PATH = os.getenv("LOTUS_BENCH_SQLITE", "bench_lotus.db")  # sqlite path
 
 # Benchmark hygiene
-WARMUP = int(os.getenv("LOTUS_BENCH_WARMUP", "1"))  # warmup runs per mode per case (not recorded)
-COOLDOWN_SEC = float(os.getenv("LOTUS_BENCH_COOLDOWN_SEC", "0.0"))  # sleep between runs
+WARMUP = int(os.getenv("LOTUS_BENCH_WARMUP", "1"))               # warmup runs per mode per case (not recorded)
+COOLDOWN_SEC = float(os.getenv("LOTUS_BENCH_COOLDOWN_SEC", "0.0"))
 SHUFFLE_MODES = os.getenv("LOTUS_BENCH_SHUFFLE", "1") == "1"
+
+# Optional: debug baseline only (helps isolate monkeypatch issues)
+ONLY_BASELINE = os.getenv("LOTUS_ONLY_BASELINE", "0") == "1"
 
 # Outputs
 OUT_DIR = os.getenv("LOTUS_BENCH_OUT_DIR", ".")
@@ -49,7 +56,6 @@ class ProvEvent:
     extra: Optional[Dict[str, Any]] = None
 
 
-# Global collector (simple for v1)
 PROV_LOG: List[ProvEvent] = []
 
 
@@ -82,7 +88,8 @@ def enable_provenance_monkeypatch() -> None:
     """
     global _ORIGINALS
 
-    # import inside to avoid import issues
+    # Import inside to avoid import issues at module import time.
+    # NOTE: if your LOTUS version changed paths, this is the only section you might need to adjust.
     from lotus.sem_ops.sem_filter import SemFilterDataframe
     from lotus.sem_ops.sem_join import SemJoinDataframe
     from lotus.sem_ops.sem_map import SemMapDataframe
@@ -93,7 +100,6 @@ def enable_provenance_monkeypatch() -> None:
         try:
             return lotus.nl_expression.parse_cols(expr)
         except Exception:
-            # don't fail provenance if parsing fails
             return []
 
     def wrap(op_name: str, cls, extract_langex: Callable[..., str], extract_cols: Callable[..., List[str]]):
@@ -146,13 +152,14 @@ def enable_provenance_monkeypatch() -> None:
                 model=_get_model_name(),
             )
             PROV_LOG.append(ev)
+
             if isinstance(df_out, pd.DataFrame):
                 _append_prov(df_out, ev)
+
             return out
 
         cls.__call__ = patched
 
-    # Extractors for each operator (signature-aware)
     wrap(
         "sem_filter",
         SemFilterDataframe,
@@ -435,16 +442,43 @@ def _run_once(fn: Callable[[], pd.DataFrame]) -> Tuple[Any, float, float, float]
     return out, wall_ms, cpu_ms, peak_mem_mb
 
 
+def _configure_lotus_lm() -> None:
+    """
+    Configure LOTUS to use either:
+    - Ollama (default) if MODEL_NAME startswith 'ollama/'
+    - OpenAI if not, requiring OPENAI_API_KEY
+    """
+    model = (MODEL_NAME or "").strip()
+
+    # Always disable cache so benchmark measures real overhead
+    lotus.settings.configure(enable_cache=False)
+
+    if model.startswith("ollama/"):
+        # Hard-fix common broken values like "http://:11434"
+        base = os.getenv("OLLAMA_API_BASE", "").strip()
+        if (not base) or ("://:" in base) or (base in ["http://:11434", "https://:11434"]):
+            base = "http://localhost:11434"
+        if not base.startswith(("http://", "https://")):
+            base = "http://localhost:11434"
+        os.environ["OLLAMA_API_BASE"] = base
+
+        lotus.settings.configure(lm=LM(model=model))
+        print(f"[OK] OLLAMA_API_BASE={os.environ['OLLAMA_API_BASE']}")
+        print(f"[OK] LM configured (Ollama): {model}")
+        return
+
+    # OpenAI path (optional)
+    if not OPENAI_API_KEY:
+        raise RuntimeError("OPENAI_API_KEY not set, and LOTUS_BENCH_MODEL is not an ollama/* model.")
+    lotus.settings.configure(lm=LM(model=model, api_key=OPENAI_API_KEY))
+    print(f"[OK] LM configured (OpenAI): {model}")
+
+
 def main() -> None:
     os.makedirs(OUT_DIR, exist_ok=True)
 
-    if not OPENAI_API_KEY:
-        raise RuntimeError("OPENAI_API_KEY not set (or switch LOTUS_BENCH_MODEL to an Ollama model).")
-
-    # Configure LOTUS LM
-    lotus.settings.configure(lm=LM(model=MODEL_NAME, api_key=OPENAI_API_KEY))
-    # Benchmarking hygiene: disable cache so we measure real overhead
-    lotus.settings.configure(enable_cache=False)
+    # Configure LOTUS LM (Ollama by default)
+    _configure_lotus_lm()
 
     # Init sqlite
     init_sqlite_db(SQLITE_PATH)
@@ -455,6 +489,7 @@ def main() -> None:
         "warmup": WARMUP,
         "cooldown_sec": COOLDOWN_SEC,
         "shuffle_modes": SHUFFLE_MODES,
+        "only_baseline": ONLY_BASELINE,
         "sqlite_path": SQLITE_PATH,
     }
     with open(META_JSON, "w", encoding="utf-8") as f:
@@ -462,19 +497,20 @@ def main() -> None:
 
     results: List[BenchResult] = []
 
-    # We iterate per case; for each iteration we run baseline/prov in randomized order (if enabled)
     for case_name, case_fn in USE_CASES:
         # Warmup (not recorded)
         for _ in range(WARMUP):
             disable_provenance_monkeypatch()
             _run_once(case_fn)
-            enable_provenance_monkeypatch()
-            _run_once(case_fn)
+
+            if not ONLY_BASELINE:
+                enable_provenance_monkeypatch()
+                _run_once(case_fn)
 
         # Measured runs
         for i in range(RUNS_PER_CASE):
-            modes = ["baseline", "prov"]
-            if SHUFFLE_MODES:
+            modes = ["baseline"] if ONLY_BASELINE else ["baseline", "prov"]
+            if SHUFFLE_MODES and not ONLY_BASELINE:
                 random.shuffle(modes)
 
             for mode in modes:
@@ -530,42 +566,46 @@ def main() -> None:
         .sort_values(["case", "mode"])
     )
 
-    # Overhead vs baseline (per case)
-    base = summary[summary["mode"] == "baseline"][["case", "avg_wall_ms", "avg_cpu_ms", "avg_peak_mem_mb"]].rename(
-        columns={
-            "avg_wall_ms": "baseline_wall_ms",
-            "avg_cpu_ms": "baseline_cpu_ms",
-            "avg_peak_mem_mb": "baseline_mem_mb",
-        }
-    )
-    prov = summary[summary["mode"] == "prov"][["case", "avg_wall_ms", "avg_cpu_ms", "avg_peak_mem_mb"]].rename(
-        columns={
-            "avg_wall_ms": "prov_wall_ms",
-            "avg_cpu_ms": "prov_cpu_ms",
-            "avg_peak_mem_mb": "prov_mem_mb",
-        }
-    )
-
-    overhead = base.merge(prov, on="case")
-    overhead["wall_overhead_ms"] = overhead["prov_wall_ms"] - overhead["baseline_wall_ms"]
-    overhead["wall_overhead_pct"] = (overhead["wall_overhead_ms"] / overhead["baseline_wall_ms"]) * 100.0
-    overhead["cpu_overhead_ms"] = overhead["prov_cpu_ms"] - overhead["baseline_cpu_ms"]
-    overhead["cpu_overhead_pct"] = (overhead["cpu_overhead_ms"] / overhead["baseline_cpu_ms"]) * 100.0
-    overhead["mem_overhead_mb"] = overhead["prov_mem_mb"] - overhead["baseline_mem_mb"]
-    overhead["mem_overhead_pct"] = (overhead["mem_overhead_mb"] / overhead["baseline_mem_mb"]) * 100.0
-
-    # Save artifacts
     summary.to_csv(SUMMARY_CSV, index=False)
-    overhead.to_csv(OVERHEAD_CSV, index=False)
 
-    # Print
-    print("\n=== BENCH SUMMARY (avg over runs) ===")
-    print(summary.to_string(index=False))
+    # Overhead vs baseline (per case) — only if prov exists
+    if not ONLY_BASELINE:
+        base = summary[summary["mode"] == "baseline"][["case", "avg_wall_ms", "avg_cpu_ms", "avg_peak_mem_mb"]].rename(
+            columns={
+                "avg_wall_ms": "baseline_wall_ms",
+                "avg_cpu_ms": "baseline_cpu_ms",
+                "avg_peak_mem_mb": "baseline_mem_mb",
+            }
+        )
+        prov = summary[summary["mode"] == "prov"][["case", "avg_wall_ms", "avg_cpu_ms", "avg_peak_mem_mb"]].rename(
+            columns={
+                "avg_wall_ms": "prov_wall_ms",
+                "avg_cpu_ms": "prov_cpu_ms",
+                "avg_peak_mem_mb": "prov_mem_mb",
+            }
+        )
 
-    print("\n=== OVERHEAD (prov vs baseline) ===")
-    print(overhead.sort_values("wall_overhead_pct", ascending=False).to_string(index=False))
+        overhead = base.merge(prov, on="case")
+        overhead["wall_overhead_ms"] = overhead["prov_wall_ms"] - overhead["baseline_wall_ms"]
+        overhead["wall_overhead_pct"] = (overhead["wall_overhead_ms"] / overhead["baseline_wall_ms"]) * 100.0
+        overhead["cpu_overhead_ms"] = overhead["prov_cpu_ms"] - overhead["baseline_cpu_ms"]
+        overhead["cpu_overhead_pct"] = (overhead["cpu_overhead_ms"] / overhead["baseline_cpu_ms"]) * 100.0
+        overhead["mem_overhead_mb"] = overhead["prov_mem_mb"] - overhead["baseline_mem_mb"]
+        overhead["mem_overhead_pct"] = (overhead["mem_overhead_mb"] / overhead["baseline_mem_mb"]) * 100.0
 
-    print(f"\nSaved: {SUMMARY_CSV}, {OVERHEAD_CSV}, {RAW_RUNS_CSV}, {META_JSON}")
+        overhead.to_csv(OVERHEAD_CSV, index=False)
+
+        print("\n=== BENCH SUMMARY (avg over runs) ===")
+        print(summary.to_string(index=False))
+
+        print("\n=== OVERHEAD (prov vs baseline) ===")
+        print(overhead.sort_values("wall_overhead_pct", ascending=False).to_string(index=False))
+
+        print(f"\nSaved: {SUMMARY_CSV}, {OVERHEAD_CSV}, {RAW_RUNS_CSV}, {META_JSON}")
+    else:
+        print("\n=== BENCH SUMMARY (baseline only) ===")
+        print(summary.to_string(index=False))
+        print(f"\nSaved: {SUMMARY_CSV}, {RAW_RUNS_CSV}, {META_JSON}")
 
 
 if __name__ == "__main__":
