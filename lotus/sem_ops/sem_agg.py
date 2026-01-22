@@ -295,8 +295,9 @@ class SemAggDataframe:
         Returns:
             pd.DataFrame: The aggregated result for the group with group identifier.
         """
-        group_name, group, user_instruction, all_cols, group_by, suffix, progress_bar_desc = args
-        result = group.sem_agg(user_instruction, all_cols, suffix, None, progress_bar_desc=progress_bar_desc)
+        group_name, group, user_instruction, all_cols, group_by, suffix, progress_bar_desc, provenance, provenance_col = args
+        result = group.sem_agg(user_instruction, all_cols, suffix, None, progress_bar_desc=progress_bar_desc,provenance=provenance,
+            provenance_col=provenance_col)
         result[group_by] = group_name
         return result
 
@@ -309,6 +310,8 @@ class SemAggDataframe:
         group_by: list[str] | None = None,
         safe_mode: bool = False,
         progress_bar_desc: str = "Aggregating",
+        provenance: bool = False,          # Added flag
+        provenance_col: str | None = None,  # Added ID source
     ) -> pd.DataFrame:
         if lotus.settings.lm is None:
             raise ValueError(
@@ -330,7 +333,7 @@ class SemAggDataframe:
         if group_by:
             grouped = self._obj.groupby(group_by)
             group_args = [
-                (group_name, group, user_instruction, all_cols, group_by, suffix, progress_bar_desc)
+                (group_name, group, user_instruction, all_cols, group_by, suffix, progress_bar_desc, provenance, provenance_col)
                 for group_name, group in grouped
             ]
             from concurrent.futures import ThreadPoolExecutor
@@ -338,9 +341,26 @@ class SemAggDataframe:
             with ThreadPoolExecutor(max_workers=lotus.settings.parallel_groupby_max_threads) as executor:
                 return pd.concat(list(executor.map(SemAggDataframe.process_group, group_args)))
 
+        # Handle provenance: Extract IDs from specified column or index
+        source_ids = None
+        if provenance:
+            if provenance_col and provenance_col in self._obj.columns:
+                source_ids = self._obj[provenance_col].tolist()
+            else:
+                source_ids = self._obj.index.tolist()
+
         # Sort df by partition_id if it exists
         if "_lotus_partition_id" in self._obj.columns:
+            # Preserve provenance ordering during sort
+            if provenance:
+                self._obj["_lotus_temp_prov_id"] = source_ids
+            
             self._obj = self._obj.sort_values(by="_lotus_partition_id")
+            
+            if provenance:
+                source_ids = self._obj["_lotus_temp_prov_id"].tolist()
+                self._obj = self._obj.drop(columns=["_lotus_temp_prov_id"])
+                
             partition_ids = self._obj["_lotus_partition_id"].tolist()
         else:
             partition_ids = [0] * len(self._obj)
@@ -361,4 +381,11 @@ class SemAggDataframe:
 
         # package answer in a dataframe
         answer_df = pd.DataFrame(answer.outputs, columns=[suffix])
+
+        # Attach provenance: For aggregation, this is the list of all input IDs
+        if provenance:
+            target_prov_col = provenance_col if provenance_col else "provenance_id"
+            # Since sem_agg returns one result for this set of docs, we assign the full ID list
+            answer_df[target_prov_col] = [source_ids]
+
         return answer_df

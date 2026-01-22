@@ -1,0 +1,9 @@
+{
+  "model": "ollama/llama3.2:3b",
+  "runs_per_case": 3,
+  "warmup": 1,
+  "cooldown_sec": 0.0,
+  "shuffle_modes": true,
+  "only_baseline": false,
+  "sqlite_path": "bench_lotus.db"
+}
