@@ -109,6 +109,13 @@ def set_benchmark_env():
     lotus.settings.configure(lm=lm)
 
 
+def get_movie_review_data(db_path, limit=10):
+    # select all columns from movie_reviews table with a limit
+    query = f"SELECT * FROM movie_reviews LIMIT {limit};"
+    df = DataConnector.load_from_db(db_path, query=query)
+    return df
+
+
 def print_summary(func_name, stats, n_iterations):
     v, p = stats["vanilla"], stats["provenance"]
     print(f"\n---- Benchmark: {func_name} (Avg over {n_iterations} runs) ----")
@@ -121,6 +128,11 @@ def print_summary(func_name, stats, n_iterations):
 
 # ==========================================
 #   Use Case Section
+# ==========================================
+
+
+# ==========================================
+#   Combined Use Cases
 # ==========================================
 
 
@@ -190,10 +202,35 @@ def extract_filter_map_join_movie_reviews(db_path, use_prov=False, debug=False):
         print(joined_df.head())
 
 
+# ==========================================
+#   Single operator Use Cases
+# ==========================================
+
+
+@benchmark_provenance_overhead(usecase_id="UC-03", n_iterations=10)
+def extract_movie_reviews(db_path, use_prov=False, debug=True):
+    df = get_movie_review_data(db_path, limit=100)
+    input_cols = ["reviewText"]
+    output_cols = {"key_aspects": "The key aspects of the movie plot discussed in the review."}
+    extracted_df = df.sem_extract(input_cols, output_cols, return_provenance=use_prov)
+    if debug:
+        print(extracted_df.head())
+
+
+@benchmark_provenance_overhead(usecase_id="UC-04", n_iterations=10)
+def filter_movie_reviews(db_path, use_prov=False, debug=True):
+    df = get_movie_review_data(db_path, limit=100)
+    filtered_df = df.sem_filter("The {reviewText} is positive about the movie's storyline?", return_provenance=use_prov)
+    if debug:
+        print(filtered_df.head())
+
+
 # TODO: Add more use case functions here following the same pattern
 
 if __name__ == "__main__":
     set_benchmark_env()
     # benchmark use case 01 -> "UC-01" as id
-    extract_filter_movie_reviews("sqlite:///../examples/db_examples/example_movie_reviews.db", debug=True)
-    extract_filter_map_join_movie_reviews("sqlite:///../examples/db_examples/example_movie_reviews.db", debug=True)
+    # extract_filter_movie_reviews("sqlite:///../examples/db_examples/example_movie_reviews.db", debug=True)
+    # extract_filter_map_join_movie_reviews("sqlite:///../examples/db_examples/example_movie_reviews.db", debug=True)
+    # extract_movie_reviews("sqlite:///../examples/db_examples/example_movie_reviews.db", debug=True)
+    filter_movie_reviews("sqlite:///../examples/db_examples/example_movie_reviews.db", debug=True)
