@@ -9,6 +9,8 @@ docs/_build
 .pytest_cache
 .env
 .idea/
+*.db
+*.csv
 
 test_env/
 .venv

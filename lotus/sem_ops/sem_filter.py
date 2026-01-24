@@ -347,7 +347,7 @@ class SemFilterDataframe:
         safe_mode: bool = False,
         progress_bar_desc: str = "Filtering",
         additional_cot_instructions: str = "",
-        return_provenance: bool = False,
+        provenance: bool = False,
     ) -> pd.DataFrame | tuple[pd.DataFrame, dict[str, Any]]:
         if lotus.settings.lm is None:
             raise ValueError(
@@ -564,7 +564,7 @@ class SemFilterDataframe:
             new_df = self._obj.iloc[ids]
             new_df.attrs["index_dirs"] = self._obj.attrs.get("index_dirs", None)
 
-            if return_provenance:
+            if provenance:
                 new_df = new_df.copy()
                 new_df["provenance_id"] = new_df.index
 
@@ -584,7 +584,7 @@ class SemFilterDataframe:
             filtered_explanations = explanations
             filtered_raw_outputs = raw_outputs
 
-            if return_provenance:
+            if provenance:
                 new_df["provenance_id"] = new_df.index
 
         # return rows where output is True
