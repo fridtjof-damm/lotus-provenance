@@ -244,6 +244,9 @@ class SemExtractDataFrame:
 
         target_prov_col = provenance_col if provenance_col else "provenance_id"
 
+        if provenance and target_prov_col not in new_df.columns:
+            new_df[target_prov_col] = pd.NA
+
         for i, output_dict in enumerate(out.outputs):
             if i >= len(indices):
                 break
@@ -254,9 +257,6 @@ class SemExtractDataFrame:
                 new_df.loc[indices[i], key] = value
 
             if provenance:
-                if target_prov_col in new_df.columns:
-                    new_df[target_prov_col] = pd.NA
-
                 if pd.isna(new_df.loc[current_idx, target_prov_col]):
                     new_df.loc[current_idx, target_prov_col] = current_idx
 
