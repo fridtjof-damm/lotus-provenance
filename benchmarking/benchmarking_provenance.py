@@ -18,16 +18,28 @@ BENCHMARKING_MODEL = "ollama/llama3.2:3b"
 RUN_ID = str(uuid.uuid4())[:8]
 
 
-def benchmark_provenance_overhead(usecase_id, n_iterations=5):
+def benchmark_provenance_overhead(usecase_id, n_iterations=3, row_limit=10):
     """Benchmark the time and memory overhead of provenance tracking in LOTUS."""
 
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
+            original_df = args[0]
+            current_df = original_df
+
+            dataset_name = original_df.attrs.get("dataset_name", "unknown_dataset")
+
+            if row_limit is not None:
+                current_df = original_df.head(row_limit)
+
+            actual_rows = len(current_df)
             debug = kwargs.pop("debug", True)
             raw_data = {"vanilla": [], "provenance": []}
 
-            print(f"\nStarting benchmark for use case {usecase_id} with {n_iterations} iterations...", flush=True)
+            print(
+                f"\nStarting benchmark for use case: {usecase_id} with {n_iterations} iterations and {actual_rows} rows...",
+                flush=True,
+            )
 
             for i in range(n_iterations):
                 modes = ["vanilla", "provenance"]
@@ -41,7 +53,7 @@ def benchmark_provenance_overhead(usecase_id, n_iterations=5):
                     tracemalloc.start()
 
                     s_wall, s_cpu = time.perf_counter(), time.process_time()
-                    func(*args, **kwargs, use_prov=prov_flag)
+                    func(current_df, *args[1:], **kwargs, use_prov=prov_flag)
                     e_cpu, e_wall = time.process_time(), time.perf_counter()
 
                     _, peak_mem = tracemalloc.get_traced_memory()
@@ -55,7 +67,7 @@ def benchmark_provenance_overhead(usecase_id, n_iterations=5):
                         }
                     )
                 print(
-                    " done.",
+                    f"Iteration {i+1} done.",
                 )
             time.sleep(5)
 
@@ -82,11 +94,11 @@ def benchmark_provenance_overhead(usecase_id, n_iterations=5):
                 "function": func.__name__,
                 "iterations": n_iterations,
                 "results": stats,
-                "metadata": {"model": BENCHMARKING_MODEL},
+                "metadata": {"model": BENCHMARKING_MODEL, "n_rows": actual_rows, "dataset": dataset_name},
             }
 
             Path("results").mkdir(exist_ok=True)
-            with open("results/provenance_benchmarks.jsonl", "a") as f:
+            with open(f"results/{usecase_id}-provenance_benchmarks.jsonl", "a") as f:
                 f.write(json.dumps(log_entry) + "\n")
 
             if debug:
@@ -103,17 +115,28 @@ def set_benchmark_env():
     """Configure LOTUS specific benchmarking settings."""
     # disable caching
     lotus.settings.configure(enable_cache=False)
-    # lm = lotus.models.LM(model="ollama/llama3.1:8b")
-    # lm = lotus.models.LM(model="gpt-4.1-nano")
     lm = lotus.models.LM(model=BENCHMARKING_MODEL)
     lotus.settings.configure(lm=lm)
 
 
-def get_movie_review_data(db_path, limit=10):
-    # select all columns from movie_reviews table with a limit
-    query = f"SELECT * FROM movie_reviews LIMIT {limit};"
-    df = DataConnector.load_from_db(db_path, query=query)
-    return df
+def get_data_sql(db_path):
+    """
+     Select all columns from database table.
+    Set query to load data and the database path.
+    Args:
+        db_path (str): Path to the database.
+        Example: "sqlite:///path/to/database.db"
+    """
+    query = "SELECT * FROM imdb_reviews;"
+    data = DataConnector.load_from_db(db_path, query=query)
+    data.attrs["dataset_name"] = db_path.split("/")[-1]
+    return data
+
+
+def get_csv_data(file_path):
+    data = pd.read_csv(file_path)
+    data.attrs["dataset_name"] = file_path.split("/")[-1]
+    return data
 
 
 def print_summary(func_name, stats, n_iterations):
@@ -136,8 +159,8 @@ def print_summary(func_name, stats, n_iterations):
 # ==========================================
 
 
-@benchmark_provenance_overhead(usecase_id="UC-01", n_iterations=10)
-def extract_filter_movie_reviews(db_path, use_prov=False, debug=False):
+@benchmark_provenance_overhead(usecase_id="UC-01")
+def extract_filter_movie_reviews(df, use_prov=False, debug=False):
     """
     01:
     SQL Use case with sem_extract and sem_filter on movie reviews dataset.
@@ -146,8 +169,6 @@ def extract_filter_movie_reviews(db_path, use_prov=False, debug=False):
     Source: https://www.kaggle.com/datasets/andrezaza/clapper-massive-rotten-tomatoes-movies-and-reviews
     """
     # setup
-    query = "SELECT * FROM movie_reviews LIMIT 10;"
-    df = DataConnector.load_from_db(db_path, query=query)
 
     # define extract parameters
     input_cols = ["reviewText"]
@@ -164,14 +185,11 @@ def extract_filter_movie_reviews(db_path, use_prov=False, debug=False):
 
 
 @benchmark_provenance_overhead(usecase_id="UC-02", n_iterations=10)
-def extract_filter_map_join_movie_reviews(db_path, use_prov=False, debug=False):
+def extract_filter_map_join_movie_reviews(df, use_prov=False, debug=False):
     """
     02:
 
     """
-    query = "SELECT * FROM movie_reviews LIMIT 10;"
-    df = DataConnector.load_from_db(db_path, query=query)
-
     input_cols = ["reviewText"]
     output_cols = {"key_aspects": "The key aspects of the movie plot discussed in the review."}
     extracted_df = df.sem_extract(input_cols, output_cols, return_provenance=use_prov)
@@ -207,20 +225,18 @@ def extract_filter_map_join_movie_reviews(db_path, use_prov=False, debug=False):
 # ==========================================
 
 
-@benchmark_provenance_overhead(usecase_id="UC-03", n_iterations=3)
-def extract_movie_reviews(db_path, use_prov=False, debug=True):
-    df = get_movie_review_data(db_path, limit=100)
-    input_cols = ["reviewText"]
+@benchmark_provenance_overhead(usecase_id="UC-03", n_iterations=3, row_limit=10)
+def extract_movie_reviews(df, use_prov=False, debug=True):
+    input_cols = ["review"]
     output_cols = {"key_aspects": "The key aspects of the movie plot discussed in the review."}
     extracted_df = df.sem_extract(input_cols, output_cols, return_provenance=use_prov)
     if debug:
         print(extracted_df.head())
 
 
-@benchmark_provenance_overhead(usecase_id="UC-04", n_iterations=3)
-def filter_movie_reviews(db_path, use_prov=False, debug=True):
-    df = get_movie_review_data(db_path, limit=500)
-    filtered_df = df.sem_filter("The {reviewText} is positive about the movie's storyline?", return_provenance=use_prov)
+@benchmark_provenance_overhead(usecase_id="UC-04", n_iterations=1, row_limit=100)
+def filter_movie_reviews(df, use_prov=False, debug=True):
+    filtered_df = df.sem_filter("The {review} is positive about the movie's storyline?", return_provenance=use_prov)
     if debug:
         print(filtered_df.head())
 
@@ -229,8 +245,6 @@ def filter_movie_reviews(db_path, use_prov=False, debug=True):
 
 if __name__ == "__main__":
     set_benchmark_env()
-    # benchmark use case 01 -> "UC-01" as id
-    # extract_filter_movie_reviews("sqlite:///../examples/db_examples/example_movie_reviews.db", debug=True)
-    # extract_filter_map_join_movie_reviews("sqlite:///../examples/db_examples/example_movie_reviews.db", debug=True)
-    # extract_movie_reviews("sqlite:///../examples/db_examples/example_movie_reviews.db", debug=True)
-    filter_movie_reviews("sqlite:///../examples/db_examples/example_movie_reviews.db", debug=True)
+    # Set correct db path and query first to load from the correct database table
+    df = get_data_sql("sqlite:///../examples/db_examples/imdb_reviews.db")
+    filter_movie_reviews(df, debug=True)
