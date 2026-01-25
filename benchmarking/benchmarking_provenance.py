@@ -14,7 +14,7 @@ import pandas as pd
 import lotus
 from lotus.data_connectors import DataConnector
 
-BENCHMARKING_MODEL = "ollama/gemma:7b"
+BENCHMARKING_MODEL = "ollama/llama3.2:3b"
 RUN_ID = str(uuid.uuid4())[:8]
 
 
@@ -207,7 +207,7 @@ def extract_filter_map_join_movie_reviews(db_path, use_prov=False, debug=False):
 # ==========================================
 
 
-@benchmark_provenance_overhead(usecase_id="UC-03", n_iterations=10)
+@benchmark_provenance_overhead(usecase_id="UC-03", n_iterations=3)
 def extract_movie_reviews(db_path, use_prov=False, debug=True):
     df = get_movie_review_data(db_path, limit=100)
     input_cols = ["reviewText"]
@@ -217,9 +217,9 @@ def extract_movie_reviews(db_path, use_prov=False, debug=True):
         print(extracted_df.head())
 
 
-@benchmark_provenance_overhead(usecase_id="UC-04", n_iterations=10)
+@benchmark_provenance_overhead(usecase_id="UC-04", n_iterations=3)
 def filter_movie_reviews(db_path, use_prov=False, debug=True):
-    df = get_movie_review_data(db_path, limit=100)
+    df = get_movie_review_data(db_path, limit=500)
     filtered_df = df.sem_filter("The {reviewText} is positive about the movie's storyline?", return_provenance=use_prov)
     if debug:
         print(filtered_df.head())
