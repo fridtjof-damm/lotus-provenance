@@ -7,6 +7,7 @@ import tracemalloc
 import uuid
 from datetime import datetime
 from functools import wraps
+from importlib.metadata import pass_none
 from pathlib import Path
 
 import pandas as pd
@@ -18,7 +19,7 @@ BENCHMARKING_MODEL = "ollama/llama3.2:3b"
 RUN_ID = str(uuid.uuid4())[:8]
 
 
-def benchmark_provenance_overhead(usecase_id, n_iterations=3, row_limit=10):
+def benchmark_provenance_overhead(usecase_id, n_iterations=3):
     """Benchmark the time and memory overhead of provenance tracking in LOTUS."""
 
     def decorator(func):
@@ -27,6 +28,8 @@ def benchmark_provenance_overhead(usecase_id, n_iterations=3, row_limit=10):
             original_df = args[0]
             current_df = original_df
 
+            default_row_limit = 100
+            row_limit = kwargs.pop("row_limit", default_row_limit)
             dataset_name = original_df.attrs.get("dataset_name", "unknown_dataset")
 
             if row_limit is not None:
@@ -98,7 +101,7 @@ def benchmark_provenance_overhead(usecase_id, n_iterations=3, row_limit=10):
             }
 
             Path("results").mkdir(exist_ok=True)
-            with open(f"results/{usecase_id}-provenance_benchmarks.jsonl", "a") as f:
+            with open(f"results/raw_data/{usecase_id}.jsonl", "a") as f:
                 f.write(json.dumps(log_entry) + "\n")
 
             if debug:
@@ -153,71 +156,63 @@ def print_summary(func_name, stats, n_iterations):
 #   Use Case Section
 # ==========================================
 
-
 # ==========================================
 #   Combined Use Cases
 # ==========================================
 
-
-@benchmark_provenance_overhead(usecase_id="UC-01")
+@benchmark_provenance_overhead(usecase_id="01-UC-EXTRACT-FILTER", n_iterations=3)
 def extract_filter_movie_reviews(df, use_prov=False, debug=False):
     """
     01:
     SQL Use case with sem_extract and sem_filter on movie reviews dataset.
     Depends on sqlite file in created in db_examples/sql_extract_filter.py
-
-    Source: https://www.kaggle.com/datasets/andrezaza/clapper-massive-rotten-tomatoes-movies-and-reviews
     """
     # setup
 
     # define extract parameters
-    input_cols = ["reviewText"]
+    input_cols = ["review"]
     output_cols = {"key_aspects": "The key aspect of the movie discussed in the review."}
 
     # run sem_ops transform
-    extracted_df = df.sem_extract(input_cols, output_cols, return_provenance=use_prov)
+    extracted_df = df.sem_extract(input_cols, output_cols, provenance=use_prov)
     filtered_extracted_df = extracted_df.sem_filter(
-        "{key_aspects} are about the cinematography or the displayed scenary.", return_provenance=use_prov
+        "{key_aspects} are positive regarding the movie production.", provenance=use_prov
     )
-
     if debug:
         print(filtered_extracted_df.head())
 
+@benchmark_provenance_overhead(usecase_id="02-UC-FILTER-AGG", n_iterations=3)
+def filter_agg_movie_reviews(df, use_prov=False, debug=False):
+    bench_df = df.sem_filter("{review} mentions cinematography or visual style in detail", provenance=use_prov).sem_agg(
+        "Summarize the common visual critiques found in these {review}s", provenance=use_prov)
+    if debug:
+        print(bench_df.head())
 
-@benchmark_provenance_overhead(usecase_id="UC-02", n_iterations=10)
-def extract_filter_map_join_movie_reviews(df, use_prov=False, debug=False):
-    """
-    02:
-
-    """
-    input_cols = ["reviewText"]
-    output_cols = {"key_aspects": "The key aspects of the movie plot discussed in the review."}
-    extracted_df = df.sem_extract(input_cols, output_cols, return_provenance=use_prov)
-
-    mapped_df = extracted_df.sem_map(
-        "Based on {key_aspects}, describe the primary setting of the movie.",
-        suffix="setting",
-        return_provenance=use_prov,
-    )
-    genres_df = {
-        "genre": ["Science Fiction", "Drama", "Action", "Horror", "Documentary"],
-        "description": [
-            "Futuristic and high-tech",
-            "Emotional and human-centric",
-            "High energy and stunts",
-            "Scary and dark",
-            "Real-world facts",
-        ],
+@benchmark_provenance_overhead(usecase_id="03-UC-JOIN-FILTER", n_iterations=3)
+def join_filter_movie_reviews(df, use_prov=False, debug=False):
+    categories = {
+        "Category": [
+            "technical and analytical",
+            "emotional and subjective",
+            "humorous and sarcastic",
+            "brief and casual",
+            "professional film criticism"
+        ]
     }
-    genres_df = pd.DataFrame(genres_df)
-    joined_df = mapped_df.sem_join(
-        genres_df,
-        "The {setting} is typical for a {genre} movie because it is {description}",
-        return_provenance=use_prov,
-    )
-
+    joined_df = df.sem_join(categories, "{review} primarily falls under the {Category} style of writing", provenance=use_prov).sem_filter("The {review} expresses a negative sentiment toward the film", provenance=use_prov)
     if debug:
         print(joined_df.head())
+
+@benchmark_provenance_overhead(usecase_id="04-UC-TOPK-MAP", n_iterations=3)
+def topk_map_movie_reviews(df, use_prov=False, debug=False):
+    top_reviews = df.sem_topk("Which {review} shows the most extreme positive enthusiasm?", K=5, provenance=use_prov)
+    reasoned_reviews = top_reviews.sem_map(
+        "Given the {review}, list the top 3 adjectives that express the user's joy. Output: [adj1, adj2, adj3]",
+        suffix="Extracted_Keywords",
+        provenance=use_prov
+    )
+    if debug:
+        print(reasoned_reviews.head())
 
 
 # ==========================================
@@ -225,26 +220,96 @@ def extract_filter_map_join_movie_reviews(df, use_prov=False, debug=False):
 # ==========================================
 
 
-@benchmark_provenance_overhead(usecase_id="UC-03", n_iterations=3, row_limit=10)
+@benchmark_provenance_overhead(usecase_id="05-UC-EXTRACT", n_iterations=3)
 def extract_movie_reviews(df, use_prov=False, debug=True):
     input_cols = ["review"]
     output_cols = {"key_aspects": "The key aspects of the movie plot discussed in the review."}
-    extracted_df = df.sem_extract(input_cols, output_cols, return_provenance=use_prov)
+    extracted_df = df.sem_extract(input_cols, output_cols, provenance=use_prov)
     if debug:
         print(extracted_df.head())
 
 
-@benchmark_provenance_overhead(usecase_id="UC-04", n_iterations=1, row_limit=100)
+@benchmark_provenance_overhead(usecase_id="06-UC-FILTER", n_iterations=3)
 def filter_movie_reviews(df, use_prov=False, debug=True):
-    filtered_df = df.sem_filter("The {review} is positive about the movie's storyline?", return_provenance=use_prov)
+    filtered_df = df.sem_filter("The {review} is positive about the movie's storyline?",
+                                provenance=use_prov)
     if debug:
         print(filtered_df.head())
 
+@benchmark_provenance_overhead(usecase_id="07-UC-AGG", n_iterations=3)
+def agg_movie_reviews(df, use_prov=False, debug=True):
+    summary = df.sem_agg(
+        "You summarize ONE group of reviews (same {sentiment}).\n"
+        "Output up to 3 bullets, each exactly:\n"
+        "- Theme=<short>; Evidence=<short phrase>\n"
+        "Use only {review}.",
+        group_by=["sentiment"],
+        provenance=use_prov
+    )
+    if debug:
+        print(summary.head())
 
-# TODO: Add more use case functions here following the same pattern
+@benchmark_provenance_overhead(usecase_id="08-UC-JOIN", n_iterations=3)
+def join_movie_reviews(df, use_prov=False, debug=False):
+    df_categories = pd.DataFrame(
+        {
+            "category": ["acting", "plot", "pacing", "dialogue", "cinematography", "sound", "other"],
+            "definition": [
+                "complaints/praise about performance, cast, acting quality",
+                "story, narrative, twists, logic, writing of story",
+                "slow/boring/dragging, too long, rhythm of the movie",
+                "lines, script quality, conversations, writing of dialogue",
+                "visuals, camera work, lighting, editing, VFX, look/feel",
+                "music, audio, volume, sound effects, mixing",
+                "no clear single category; general opinion or mixed feedback",
+            ],
+        }
+    )
+    joined = df.sem_join(
+        df_categories,
+        "Choose the single best {category:right} for this review. "
+        "If it matches {definition:right}, then assign it.\n\n"
+        "Review: {review:left}",
+        provenance=use_prov
+    )
+    if debug:
+        print(joined.head())
+
+
+@benchmark_provenance_overhead(usecase_id="09-UC-MAP", n_iterations=3)
+def map_movie_reviews(df, use_prov=False, debug=False):
+    mapped = df.sem_map(
+        "From this IMDb review, output exactly ONE label from:\n"
+        "acting/plot/pacing/dialogue/cinematography/sound/other\n"
+        "Rules:\n"
+        "- If the review is mostly positive or no clear single aspect => other\n"
+        "- Return ONLY the label (one word), lowercase.\n"
+        "Review: {review}",
+        suffix="_aspect",
+        provenance=use_prov
+    )
+    if debug:
+        print(mapped.head())
+
+@benchmark_provenance_overhead(usecase_id="10-UC-TOPK", n_iterations=3)
+def top_k_movie_reviews(df, use_prov=False, debug=False):
+    topk = df.sem_topk(
+        "Rank by strongest positive enthusiasm and excitement.\n"
+        "Prefer reviews with intense praise, strong emotion, and superlatives.\n"
+        "Use ONLY the review text: {review}",
+        K=5,
+        provenance=use_prov
+    )
+    if debug:
+        print(topk.head())
 
 if __name__ == "__main__":
     set_benchmark_env()
     # Set correct db path and query first to load from the correct database table
     df = get_data_sql("sqlite:///../examples/db_examples/imdb_reviews.db")
-    filter_movie_reviews(df, debug=True)
+    #filter_movie_reviews(df, debug=True)
+
+    row_limits =  [10,100,500]
+    for limit in row_limits:
+        extract_filter_movie_reviews(df, debug=True, row_limit=limit)
+        time.sleep(5)
