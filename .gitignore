@@ -17,6 +17,7 @@ test_env/
 
 tests/course_index/index
 tests/course_index/vecs
+*.pdf
 
 
 *.pdf
