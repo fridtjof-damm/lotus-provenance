@@ -1,25 +1,66 @@
 import json
 from pathlib import Path
 
+import duckdb
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
 
-def generate_plots(jsonl_path):
-    # 1. Load and Flatten Data
+def ingest_raw_data_sql(db_path, raw_data_path):
+    raw_data = raw_data_to_df(raw_data_path)
+    conn = duckdb.connect(db_path)
+    conn.execute("CREATE OR REPLACE TABLE results AS SELECT * FROM raw_data")
+    print(f"Updated database: Total entries: {conn.execute('SELECT count(*) FROM results').fetchone()[0]}")
+    conn.close()
+    return raw_data
+
+
+def raw_data_to_df(dir_path) -> pd.DataFrame:
+    files = sorted([f for f in Path(dir_path).glob("*.jsonl")])
     data = []
-    with open(jsonl_path, "r") as f:
-        for line in f:
-            data.append(json.loads(line))
-
+    print(files)
+    for file in files:
+        with open(file, "r") as f:
+            for line in f:
+                if line.strip():
+                    data.append(json.loads(line))
+    # json_normalize macht aus verschachtelten JSONs flache Tabellen
     df = pd.json_normalize(data)
+    # Optional: Zeitstempel konvertieren für besseres Sortieren
+    df["timestamp"] = pd.to_datetime(df["timestamp"])
+    # Ergebnisse speichern
+    return df
 
-    # 2. Extract Metadata for Plot Text (Assume consistency across runs)
+
+def get_run_data(db_path):
+    conn = duckdb.connect(db_path)
+    # Wir laden das Ergebnis direkt als Pandas DataFrame
+    df = conn.execute("""
+        SELECT *
+        FROM results
+        ORDER BY usecase_id ASC, timestamp DESC;
+    """).df()
+    conn.close()
+
+    # sonst WHERE = n_rows = x und n_iterations = y
+
+    # Falls mehrere Runs pro Use Case existieren, nehmen wir nur den aktuellsten
+    df = df.sort_values("timestamp").groupby("usecase_id").tail(1).reset_index(drop=True)
+    return df
+
+
+def generate_plots_from_df(df):
+    # Die Logik bleibt identisch, wir nutzen nur das übergebene df
+    if df.empty:
+        print("No data found for the given parameters.")
+        return
+
+    # Metadaten extrahieren
     model = df["metadata.model"].iloc[0]
     n_iters = df["iterations"].iloc[0]
-    # Extract dataset name from function name (e.g., 'movie_reviews')
-    dataset = df["function"].iloc[0].split("_", 1)[1] if "_" in df["function"].iloc[0] else "Data"
+    # dataset = df["function"].iloc[0].split("_", 1)[1] if "_" in df["function"].iloc[0] else "Data"
+    n_rows = df["metadata.n_rows"].iloc[0]
 
     metrics = [
         ("wall_mean", "Wall Time (s)", "wall_std"),
@@ -27,34 +68,29 @@ def generate_plots(jsonl_path):
         ("mem_mean", "Memory Usage (MB)", "mem_std"),
     ]
 
-    # 3. Create a Plot for each Metric
     for metric_key, label, std_key in metrics:
         plt.figure(figsize=(12, 6))
-
         usecases = df["usecase_id"].tolist()
+
+        # Sicherstellen, dass die Spaltennamen mit den DuckDB-Spalten übereinstimmen
         vanilla_vals = df[f"results.vanilla.{metric_key}"].tolist()
         prov_vals = df[f"results.provenance.{metric_key}"].tolist()
-
-        # vanilla_std = df[f"results.vanilla.{std_key}"].tolist()
-        # prov_std = df[f"results.provenance.{std_key}"].tolist()
 
         x = np.arange(len(usecases))
         width = 0.35
 
-        # Grouped Bars
         plt.bar(x - width / 2, vanilla_vals, width, label="LOTUS", color="#1d3557")
         plt.bar(x + width / 2, prov_vals, width, label="LOTUS + Provenance", color="#f1a10d")
 
-        # Labels and Title
         plt.ylabel(label)
         plt.title(f"Benchmarking {label} for LOTUS Pipelines")
         plt.xticks(x, usecases, rotation=45)
         plt.legend()
         plt.grid(axis="y", alpha=0.3)
 
+        # Overhead Text-Labels
         for i in range(len(usecases)):
-            v = vanilla_vals[i]
-            p = prov_vals[i]
+            v, p = vanilla_vals[i], prov_vals[i]
             overhead = ((p / v) - 1) * 100
             plt.text(
                 x[i] + width / 2,
@@ -66,7 +102,7 @@ def generate_plots(jsonl_path):
                 fontweight="bold",
             )
 
-        info_text = f"Model: {model}\nIterations: {n_iters}\nDataset: {dataset}"
+        info_text = f"Model: {model}\nIterations: {n_iters}\nRows: {df['metadata.n_rows'].iloc[0]}"
         plt.gca().text(
             0.98,
             0.02,
@@ -79,10 +115,16 @@ def generate_plots(jsonl_path):
 
         plt.tight_layout()
         Path("results/plots").mkdir(exist_ok=True)
-        pdf_filename = f"results/plots/plot_{metric_key}.pdf"
-        plt.savefig(pdf_filename, format="pdf")
+        plt.savefig(f"results/plots/plot_{metric_key}_{model.replace('/','-')}_{n_rows}.pdf", format="pdf")
         plt.show()
 
 
 if __name__ == "__main__":
-    generate_plots("results/provenance_benchmarks.jsonl")
+    db_path = "benchmark_results.db"
+    raw_data_path = "results/raw_data/"
+    # 1. Daten in DB aktualisieren
+    ingest_raw_data_sql(db_path, raw_data_path)
+    # 2. Gezielte Daten für den Plot abfragen (n_rows=10, iters=5)
+    filtered_df = get_run_data(db_path)
+    # 3. Plotten
+    generate_plots_from_df(filtered_df)

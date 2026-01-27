@@ -7,7 +7,6 @@ import tracemalloc
 import uuid
 from datetime import datetime
 from functools import wraps
-from importlib.metadata import pass_none
 from pathlib import Path
 
 import pandas as pd
@@ -160,6 +159,7 @@ def print_summary(func_name, stats, n_iterations):
 #   Combined Use Cases
 # ==========================================
 
+
 @benchmark_provenance_overhead(usecase_id="01-UC-EXTRACT-FILTER", n_iterations=3)
 def extract_filter_movie_reviews(df, use_prov=False, debug=False):
     """
@@ -181,12 +181,15 @@ def extract_filter_movie_reviews(df, use_prov=False, debug=False):
     if debug:
         print(filtered_extracted_df.head())
 
+
 @benchmark_provenance_overhead(usecase_id="02-UC-FILTER-AGG", n_iterations=3)
 def filter_agg_movie_reviews(df, use_prov=False, debug=False):
     bench_df = df.sem_filter("{review} mentions cinematography or visual style in detail", provenance=use_prov).sem_agg(
-        "Summarize the common visual critiques found in these {review}s", provenance=use_prov)
+        "Summarize the common visual critiques found in these {review}s", provenance=use_prov
+    )
     if debug:
         print(bench_df.head())
+
 
 @benchmark_provenance_overhead(usecase_id="03-UC-JOIN-FILTER", n_iterations=3)
 def join_filter_movie_reviews(df, use_prov=False, debug=False):
@@ -196,14 +199,17 @@ def join_filter_movie_reviews(df, use_prov=False, debug=False):
             "emotional and subjective",
             "humorous and sarcastic",
             "brief and casual",
-            "professional film criticism"
+            "professional film criticism",
         ]
     }
     categories = pd.DataFrame(categories)
-    joined_df = df.sem_join(categories, "{review} primarily falls under the {category} style of writing", provenance=use_prov)
+    joined_df = df.sem_join(
+        categories, "{review} primarily falls under the {category} style of writing", provenance=use_prov
+    )
     filtered = joined_df.sem_filter("The {review} expresses a negative sentiment toward the film", provenance=use_prov)
     if debug:
         print(filtered.head())
+
 
 @benchmark_provenance_overhead(usecase_id="04-UC-TOPK-MAP", n_iterations=3)
 def topk_map_movie_reviews(df, use_prov=False, debug=False):
@@ -211,7 +217,7 @@ def topk_map_movie_reviews(df, use_prov=False, debug=False):
     reasoned_reviews = top_reviews.sem_map(
         "Given the {review}, list the top 3 adjectives that express the user's joy. Output: [adj1, adj2, adj3]",
         suffix="Extracted_Keywords",
-        provenance=use_prov
+        provenance=use_prov,
     )
     if debug:
         print(reasoned_reviews.head())
@@ -233,10 +239,10 @@ def extract_movie_reviews(df, use_prov=False, debug=True):
 
 @benchmark_provenance_overhead(usecase_id="06-UC-FILTER", n_iterations=3)
 def filter_movie_reviews(df, use_prov=False, debug=True):
-    filtered_df = df.sem_filter("The {review} is positive about the movie's storyline?",
-                                provenance=use_prov)
+    filtered_df = df.sem_filter("The {review} is positive about the movie's storyline?", provenance=use_prov)
     if debug:
         print(filtered_df.head())
+
 
 @benchmark_provenance_overhead(usecase_id="07-UC-AGG", n_iterations=3)
 def agg_movie_reviews(df, use_prov=False, debug=True):
@@ -246,10 +252,11 @@ def agg_movie_reviews(df, use_prov=False, debug=True):
         "- Theme=<short>; Evidence=<short phrase>\n"
         "Use only {review}.",
         group_by=["sentiment"],
-        provenance=use_prov
+        provenance=use_prov,
     )
     if debug:
         print(summary.head())
+
 
 @benchmark_provenance_overhead(usecase_id="08-UC-JOIN", n_iterations=3)
 def join_movie_reviews(df, use_prov=False, debug=False):
@@ -272,7 +279,7 @@ def join_movie_reviews(df, use_prov=False, debug=False):
         "Choose the single best {category:right} for this review. "
         "If it matches {definition:right}, then assign it.\n\n"
         "Review: {review:left}",
-        provenance=use_prov
+        provenance=use_prov,
     )
     if debug:
         print(joined.head())
@@ -288,10 +295,11 @@ def map_movie_reviews(df, use_prov=False, debug=False):
         "- Return ONLY the label (one word), lowercase.\n"
         "Review: {review}",
         suffix="_aspect",
-        provenance=use_prov
+        provenance=use_prov,
     )
     if debug:
         print(mapped.head())
+
 
 @benchmark_provenance_overhead(usecase_id="10-UC-TOPK", n_iterations=3)
 def top_k_movie_reviews(df, use_prov=False, debug=False):
@@ -300,27 +308,26 @@ def top_k_movie_reviews(df, use_prov=False, debug=False):
         "Prefer reviews with intense praise, strong emotion, and superlatives.\n"
         "Use ONLY the review text: {review}",
         K=5,
-        provenance=use_prov
+        provenance=use_prov,
     )
     if debug:
         print(topk.head())
+
 
 if __name__ == "__main__":
     set_benchmark_env()
     # Set correct db path and query first to load from the correct database table
     df = get_data_sql("sqlite:///../examples/db_examples/imdb_reviews.db")
-    #filter_movie_reviews(df, debug=True)
+    # filter_movie_reviews(df, debug=True)
 
-    row_limits =  [10,100,500]
+    row_limits = [10]
     for limit in row_limits:
-        if limit == 10:
-            continue
-        filter_agg_movie_reviews(df, debug=True, row_limit=limit)
-        time.sleep(50)
-        join_filter_movie_reviews(df, debug=True, row_limit=limit)
-        time.sleep(50)
-        topk_map_movie_reviews(df, debug=True, row_limit=limit)
-        time.sleep(50)
+        """        filter_agg_movie_reviews(df, debug=True, row_limit=limit)
+                time.sleep(50)
+                join_filter_movie_reviews(df, debug=True, row_limit=limit)
+                time.sleep(50)
+                topk_map_movie_reviews(df, debug=True, row_limit=limit)
+                time.sleep(50)"""
         extract_movie_reviews(df, debug=True, row_limit=limit)
         time.sleep(50)
         filter_movie_reviews(df, debug=True, row_limit=limit)
@@ -333,5 +340,3 @@ if __name__ == "__main__":
         time.sleep(50)
         top_k_movie_reviews(df, debug=True, row_limit=limit)
         time.sleep(80)
-
-
