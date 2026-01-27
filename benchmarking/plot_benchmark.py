@@ -6,12 +6,41 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+""""
+This script loads the raw data from the jsonl files into a DuckDB instance to postprocess the benchmarking data into
+"""
+USECASE_ALIASES = {
+    # Pipeline Use Cases
+    "01-UC-EXTRACT-FILTER": "sem_extract, sem_filter",
+    "02-UC-FILTER-AGG": "sem_filter -> sem_agg",
+    "03-UC-JOIN-FILTER": "sem_join -> sem_filter",
+    "04-UC-TOPK-MAP": "sem_topk -> sem_map",
+    # Single Operator Use Cases
+    "05-UC-EXTRACT": "sem_extract",
+    "06-UC-FILTER": "sem_filter",
+    "07-UC-AGG": "sem_agg",
+    "08-UC-JOIN": "sem_join",
+    "09-UC-MAP": "sem_map",
+    "10-UC-TOPK": "sem_topk",
+}
+
 
 def ingest_raw_data_sql(db_path, raw_data_path):
     raw_data = raw_data_to_df(raw_data_path)
     conn = duckdb.connect(db_path)
+    # ingest new data
     conn.execute("CREATE OR REPLACE TABLE results AS SELECT * FROM raw_data")
-    print(f"Updated database: Total entries: {conn.execute('SELECT count(*) FROM results').fetchone()[0]}")
+    # keep newest run in a view per n-iterations and rows processed
+    conn.execute("""
+                CREATE VIEW IF NOT EXISTS latest_runs AS
+                SELECT *
+                FROM results QUALIFY row_number() OVER (
+                PARTITION BY usecase_id, "metadata.n_rows", iterations 
+                ORDER BY timestamp DESC
+            ) = 1;
+                 """)
+
+    print(f"Updated database: Total raw entries: {conn.execute('SELECT count(*) FROM results').fetchone()[0]}")
     conn.close()
     return raw_data
 
@@ -33,20 +62,17 @@ def raw_data_to_df(dir_path) -> pd.DataFrame:
     return df
 
 
-def get_run_data(db_path):
+def get_run_data(db_path, n_rows, iterations, model):
     conn = duckdb.connect(db_path)
     # Wir laden das Ergebnis direkt als Pandas DataFrame
-    df = conn.execute("""
+    df = conn.execute(f"""
         SELECT *
-        FROM results
-        ORDER BY usecase_id ASC, timestamp DESC;
+        FROM latest_runs
+        WHERE "metadata.n_rows" = {n_rows} AND iterations = {iterations} AND "metadata.model" = '{model}'
+        AND usecase_id BETWEEN '05' AND '11'
+        ORDER BY CAST(str_split(usecase_id, '-')[1] AS INTEGER) ASC;
     """).df()
     conn.close()
-
-    # sonst WHERE = n_rows = x und n_iterations = y
-
-    # Falls mehrere Runs pro Use Case existieren, nehmen wir nur den aktuellsten
-    df = df.sort_values("timestamp").groupby("usecase_id").tail(1).reset_index(drop=True)
     return df
 
 
@@ -70,7 +96,7 @@ def generate_plots_from_df(df):
 
     for metric_key, label, std_key in metrics:
         plt.figure(figsize=(12, 6))
-        usecases = df["usecase_id"].tolist()
+        usecases = [USECASE_ALIASES.get(uid, uid) for uid in df["usecase_id"].tolist()]
 
         # Sicherstellen, dass die Spaltennamen mit den DuckDB-Spalten übereinstimmen
         vanilla_vals = df[f"results.vanilla.{metric_key}"].tolist()
@@ -125,6 +151,7 @@ if __name__ == "__main__":
     # 1. Daten in DB aktualisieren
     ingest_raw_data_sql(db_path, raw_data_path)
     # 2. Gezielte Daten für den Plot abfragen (n_rows=10, iters=5)
-    filtered_df = get_run_data(db_path)
+
+    filtered_df = get_run_data(db_path, 100, 3, "ollama/llama3.2:3b")
     # 3. Plotten
     generate_plots_from_df(filtered_df)
