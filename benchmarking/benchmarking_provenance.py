@@ -191,7 +191,7 @@ def filter_agg_movie_reviews(df, use_prov=False, debug=False):
 @benchmark_provenance_overhead(usecase_id="03-UC-JOIN-FILTER", n_iterations=3)
 def join_filter_movie_reviews(df, use_prov=False, debug=False):
     categories = {
-        "Category": [
+        "category": [
             "technical and analytical",
             "emotional and subjective",
             "humorous and sarcastic",
@@ -199,9 +199,11 @@ def join_filter_movie_reviews(df, use_prov=False, debug=False):
             "professional film criticism"
         ]
     }
-    joined_df = df.sem_join(categories, "{review} primarily falls under the {Category} style of writing", provenance=use_prov).sem_filter("The {review} expresses a negative sentiment toward the film", provenance=use_prov)
+    categories = pd.DataFrame(categories)
+    joined_df = df.sem_join(categories, "{review} primarily falls under the {category} style of writing", provenance=use_prov)
+    filtered = joined_df.sem_filter("The {review} expresses a negative sentiment toward the film", provenance=use_prov)
     if debug:
-        print(joined_df.head())
+        print(filtered.head())
 
 @benchmark_provenance_overhead(usecase_id="04-UC-TOPK-MAP", n_iterations=3)
 def topk_map_movie_reviews(df, use_prov=False, debug=False):
@@ -311,5 +313,25 @@ if __name__ == "__main__":
 
     row_limits =  [10,100,500]
     for limit in row_limits:
-        extract_filter_movie_reviews(df, debug=True, row_limit=limit)
-        time.sleep(5)
+        if limit == 10:
+            continue
+        filter_agg_movie_reviews(df, debug=True, row_limit=limit)
+        time.sleep(50)
+        join_filter_movie_reviews(df, debug=True, row_limit=limit)
+        time.sleep(50)
+        topk_map_movie_reviews(df, debug=True, row_limit=limit)
+        time.sleep(50)
+        extract_movie_reviews(df, debug=True, row_limit=limit)
+        time.sleep(50)
+        filter_movie_reviews(df, debug=True, row_limit=limit)
+        time.sleep(50)
+        agg_movie_reviews(df, debug=True, row_limit=limit)
+        time.sleep(50)
+        join_movie_reviews(df, debug=True, row_limit=limit)
+        time.sleep(50)
+        map_movie_reviews(df, debug=True, row_limit=limit)
+        time.sleep(50)
+        top_k_movie_reviews(df, debug=True, row_limit=limit)
+        time.sleep(80)
+
+

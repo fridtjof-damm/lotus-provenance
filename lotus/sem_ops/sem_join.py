@@ -480,7 +480,7 @@ class SemJoinDataframe:
         return_stats: bool = False,
         safe_mode: bool = False,
         progress_bar_desc: str = "Join comparisons",
-        return_provenance: bool = False,
+        provenance: bool = False,
         provenance_left_col: str = "provenance_left_index",
         provenance_right_col: str = "provenance_right_index",
     ) -> pd.DataFrame:
@@ -621,7 +621,7 @@ class SemJoinDataframe:
             .join(df2.set_index(right_id_col), how="left", on=right_id_col)
         )
 
-        if return_provenance:
+        if provenance:
             if provenance_left_col in joined_df.columns or provenance_right_col in joined_df.columns:
                 raise ValueError("Provenance column name already exists in output. Use different names.")
             joined_df[provenance_left_col] = joined_df[left_id_col]
