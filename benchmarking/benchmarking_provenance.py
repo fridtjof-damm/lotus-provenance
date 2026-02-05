@@ -16,6 +16,7 @@ from benchmarking.mock_lm import MockLM
 from lotus.data_connectors import DataConnector
 
 BENCHMARKING_MODEL = "ollama/llama3.2:3b"
+BENCHMARKING_SYSTEM = ""
 RUN_ID = str(uuid.uuid4())[:8]
 
 
@@ -112,6 +113,7 @@ def benchmark_provenance_overhead(usecase_id, n_iterations=3):
                     "n_rows": actual_rows,
                     "dataset": dataset_name,
                     "mock_lm": True,
+                    "system": BENCHMARKING_SYSTEM,
                 },
             }
 
@@ -139,13 +141,16 @@ def set_benchmark_env():
 
 def get_data_sql(db_path):
     """
-     Select all columns from database table.
+    Select all columns from database table.
     Set query to load data and the database path.
+
+    Update: Reading data from VIEW that only stores 200 char long reviews
+
     Args:
         db_path (str): Path to the database.
         Example: "sqlite:///path/to/database.db"
     """
-    query = "SELECT * FROM imdb_reviews;"
+    query = "SELECT * FROM short_text_reviews;"
     data = DataConnector.load_from_db(db_path, query=query)
     data.attrs["dataset_name"] = db_path.split("/")[-1]
     return data
@@ -274,8 +279,8 @@ def agg_movie_reviews(df, use_prov=False, debug=True):
         print(summary.head())
 
 
-@benchmark_provenance_overhead(usecase_id="08-UC-JOIN", n_iterations=50)
-def join_movie_reviews(df, use_prov=False, debug=False):
+#@benchmark_provenance_overhead(usecase_id="08-UC-JOIN", n_iterations=50)
+def join_movie_reviews(df, use_prov=False, debug=True):
     df_categories = pd.DataFrame(
         {
             "category": ["acting", "plot", "pacing", "dialogue", "cinematography", "sound", "other"],
@@ -299,6 +304,7 @@ def join_movie_reviews(df, use_prov=False, debug=False):
     )
     if debug:
         print(joined.head())
+    return joined
 
 
 @benchmark_provenance_overhead(usecase_id="09-UC-MAP", n_iterations=50)
@@ -317,7 +323,7 @@ def map_movie_reviews(df, use_prov=False, debug=False):
         print(mapped.head())
 
 
-@benchmark_provenance_overhead(usecase_id="10-UC-TOPK", n_iterations=50)
+@benchmark_provenance_overhead(usecase_id="10-UC-TOPK", n_iterations=1)
 def top_k_movie_reviews(df, use_prov=False, debug=False):
     topk = df.sem_topk(
         "Rank by strongest positive enthusiasm and excitement.\n"
@@ -334,18 +340,16 @@ if __name__ == "__main__":
     set_benchmark_env()
     # Set correct db path and query first to load from the correct database table
     df = get_data_sql("sqlite:///../examples/db_examples/imdb_reviews.db")
-    # filter_movie_reviews(df, debug=True)
-
-    row_limits = [10, 100, 500, 1000]
+    row_limits = [100, 500]
     for limit in row_limits:
-        extract_filter_movie_reviews(df, debug=True, row_limit=limit)
-        time.sleep(5)
-        filter_agg_movie_reviews(df, debug=True, row_limit=limit)
-        time.sleep(5)
-        join_filter_movie_reviews(df, debug=True, row_limit=limit)
-        time.sleep(5)
-        topk_map_movie_reviews(df, debug=True, row_limit=limit)
-        time.sleep(5)
+        """        extract_filter_movie_reviews(df, debug=True, row_limit=limit)
+                time.sleep(5)
+                filter_agg_movie_reviews(df, debug=True, row_limit=limit)
+                time.sleep(5)
+                join_filter_movie_reviews(df, debug=True, row_limit=limit)
+                time.sleep(5)
+                topk_map_movie_reviews(df, debug=True, row_limit=limit)
+                time.sleep(5)"""
         extract_movie_reviews(df, debug=True, row_limit=limit)
         time.sleep(5)
         filter_movie_reviews(df, debug=True, row_limit=limit)
@@ -356,5 +360,8 @@ if __name__ == "__main__":
         time.sleep(5)
         map_movie_reviews(df, debug=True, row_limit=limit)
         time.sleep(5)
-        top_k_movie_reviews(df, debug=True, row_limit=limit)
-        time.sleep(5)
+        """
+        top_k_movie_reviews(df, debug=True, row_limit=5)
+        joined_result = join_movie_reviews(df[:10],use_prov=True,debug=True)
+        joined_result.to_csv("join_result.csv", index=False)"""
+
