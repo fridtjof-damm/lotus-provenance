@@ -1,6 +1,7 @@
 import hashlib
 import json
 from pathlib import Path
+import re
 
 import lotus
 
@@ -26,6 +27,7 @@ class MockLM(lotus.models.LM):
     def hash_prompt(self, prompt):
         def extract_text(obj):
             if isinstance(obj, str):
+                obj = re.sub(r'.*?/lotus-provenance/', 'PROJECT_ROOT/', obj)
                 return obj
             if isinstance(obj, dict):
                 return " ".join(extract_text(v) for k, v in obj.items() if k in ["text", "content", "role"])
@@ -43,7 +45,6 @@ class MockLM(lotus.models.LM):
         new_data_recorded = False
 
         for p in prompts:
-            print(f"PROMPT: {p[:5]}")
             p_hash = self.hash_prompt(p)
 
             if p_hash in self.cache:

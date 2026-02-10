@@ -16,6 +16,7 @@ from benchmarking.mock_lm import MockLM
 from lotus.data_connectors import DataConnector
 
 BENCHMARKING_MODEL = "ollama/llama3.2:3b"
+BENCHMARKING_SYSTEM = "32GB-RAM-MBP-FD"
 BENCHMARKING_SYSTEM = ""
 REVIEW_TEXT_LEN = 200
 RUN_ID = str(uuid.uuid4())[:8]
@@ -218,35 +219,32 @@ def extract_filter_movie_reviews(df, use_prov=False, debug=False):
 
 @benchmark_provenance_overhead(usecase_id="02-UC-FILTER-TOPK-EXTRACT-AGG", n_iterations=50)
 def filter_agg_movie_reviews(df, use_prov=False, debug=False):
-    filtered_df = df.sem_filter("{review} discusses the films quality, acting, or direction", provenance=use_prov)
-    top_k_df = filtered_df.sem_topk("Which {review} is the most descriptive?", K=5, provenance=use_prov)
-    extracted_df = top_k_df.sem_extract(
-        ["review"], {"visual_flaws": "List any visual flaws mentioned."}, provenance=use_prov
-    )
-    bench_df = extracted_df.sem_agg(
-        "Summarize the common visual critiques and specific flaws found in these {review}s", provenance=use_prov
-    )
-
+    filtered_df = df.sem_filter("{review} discusses quality", provenance=use_prov)
+    extracted_df = filtered_df.sem_extract(["review"], {"visual_flaws": "List visual flaws."}, provenance=use_prov)
+    agg_df = extracted_df.sem_agg("Summarize {visual_flaws}", provenance=use_prov)
+    bench_df = agg_df.sem_topk("Which summary is most critical?", K=5,provenance=use_prov)
     if debug:
         print(bench_df.head())
 
 
 @benchmark_provenance_overhead(usecase_id="03-UC-JOIN-EXTRACT-FILTER", n_iterations=50)
 def join_filter_movie_reviews(df, use_prov=False, debug=False):
-    categories = pd.DataFrame({"category": ["technical and analytical", "emotional and subjective"]})
-
-    joined_df = df.sem_join(
-        categories, "{review} primarily falls under the {category} style of writing", provenance=use_prov
-    )
-    extracted_df = joined_df.sem_extract(
-        ["review", "category"],
-        {"style_evidence": "Short qoute from the review that proves it is {category}."},
+    extracted_df = df.sem_extract(
+        ["review"],
+        {"key_quote": "A short characteristic quote from the review."},
         provenance=use_prov,
     )
-    bench_df = extracted_df.sem_filter(
-        "{review} expresses a negative sentiment toward the film", provenance=use_prov
-    ).sem_filter("{style_evidence} is longer than 3 words.", provenance=use_prov)
 
+    filtered_df = extracted_df.sem_filter(
+        "{review} expresses a negative sentiment toward the film",
+        provenance=use_prov
+    )
+    categories = pd.DataFrame({"category": ["technical and analytical", "emotional and subjective"]})
+    joined_df = filtered_df.sem_join(categories,
+                                     "{review} primarily falls under the category style of writing. Only answer with the EXACT category.",
+                                     provenance=use_prov)
+    bench_df = joined_df.sem_filter("{key_quote} fits the {category} style",
+                                    provenance=use_prov,)
     if debug:
         print(bench_df.head())
 
@@ -259,13 +257,15 @@ def topk_map_movie_reviews(df, use_prov=False, debug=False):
         suffix="Extracted_Keywords",
         provenance=use_prov,
     )
+    aggregated_df = reasoned_reviews.sem_agg(
+        "Summarize the vocabulary of joy found in these {Extracted_Keywords}?", provenance=use_prov
+    )
+
     audiences = pd.DataFrame({"target_audience": ["Cinephiles", "Mainstream Popcorn Fans"]})
-    profiled_df = reasoned_reviews.sem_join(
+    bench_df = aggregated_df.sem_join(
         audiences, "Would a {target_audience} member use the keywords {Extracted_Keywords}?", provenance=use_prov
     )
-    bench_df = profiled_df.sem_agg(
-        "What defines the vocabulary of joy for different {target_audience}s?", provenance=use_prov
-    )
+
 
     if debug:
         print(bench_df.head())
@@ -367,7 +367,7 @@ if __name__ == "__main__":
     set_benchmark_env()
     # Set correct db path and query first to load from the correct database table
     df = get_data_sql("sqlite:///../examples/db_examples/imdb_reviews.db")
-    row_limits = [100, 500]
+    row_limits = [100]
     for limit in row_limits:
         extract_filter_movie_reviews(df, debug=True, row_limit=limit)
         time.sleep(5)
@@ -377,7 +377,7 @@ if __name__ == "__main__":
         time.sleep(5)
         topk_map_movie_reviews(df, debug=True, row_limit=limit)
         time.sleep(5)
-        extract_movie_reviews(df, debug=True, row_limit=limit)
+        """        extract_movie_reviews(df, debug=True, row_limit=limit)
         time.sleep(5)
         filter_movie_reviews(df, debug=True, row_limit=limit)
         time.sleep(5)
@@ -386,4 +386,4 @@ if __name__ == "__main__":
         join_movie_reviews(df, debug=True, row_limit=limit)
         time.sleep(5)
         map_movie_reviews(df, debug=True, row_limit=limit)
-        top_k_movie_reviews(df, debug=True, row_limit=limit)
+        top_k_movie_reviews(df, debug=True, row_limit=limit)"""
