@@ -222,7 +222,8 @@ def filter_agg_movie_reviews(df, use_prov=False, debug=False):
     filtered_df = df.sem_filter("{review} discusses quality", provenance=use_prov)
     extracted_df = filtered_df.sem_extract(["review"], {"visual_flaws": "List visual flaws."}, provenance=use_prov)
     agg_df = extracted_df.sem_agg("Summarize {visual_flaws}", provenance=use_prov)
-    bench_df = agg_df.sem_topk("Which summary is most critical?", K=5,provenance=use_prov)
+    target_col = agg_df.columns[0]
+    bench_df = agg_df.sem_topk(f"Which summary in {{{target_col}}} is most critical?", K=5,provenance=use_prov)
     if debug:
         print(bench_df.head())
 
@@ -241,7 +242,7 @@ def join_filter_movie_reviews(df, use_prov=False, debug=False):
     )
     categories = pd.DataFrame({"category": ["technical and analytical", "emotional and subjective"]})
     joined_df = filtered_df.sem_join(categories,
-                                     "{review} primarily falls under the category style of writing. Only answer with the EXACT category.",
+                                     "{review} primarily falls under the {category} style of writing. Only answer with the EXACT category.",
                                      provenance=use_prov)
     bench_df = joined_df.sem_filter("{key_quote} fits the {category} style",
                                     provenance=use_prov,)
@@ -260,10 +261,10 @@ def topk_map_movie_reviews(df, use_prov=False, debug=False):
     aggregated_df = reasoned_reviews.sem_agg(
         "Summarize the vocabulary of joy found in these {Extracted_Keywords}?", provenance=use_prov
     )
-
+    target_col = aggregated_df.columns[0]
     audiences = pd.DataFrame({"target_audience": ["Cinephiles", "Mainstream Popcorn Fans"]})
     bench_df = aggregated_df.sem_join(
-        audiences, "Would a {target_audience} member use the keywords {Extracted_Keywords}?", provenance=use_prov
+        audiences, f"Would a {{target_audience:right}} member use the keywords {{{target_col}:left}}?", provenance=use_prov
     )
 
 
@@ -369,12 +370,12 @@ if __name__ == "__main__":
     df = get_data_sql("sqlite:///../examples/db_examples/imdb_reviews.db")
     row_limits = [100]
     for limit in row_limits:
-        extract_filter_movie_reviews(df, debug=True, row_limit=limit)
-        time.sleep(5)
-        filter_agg_movie_reviews(df, debug=True, row_limit=limit)
-        time.sleep(5)
-        join_filter_movie_reviews(df, debug=True, row_limit=limit)
-        time.sleep(5)
+        #extract_filter_movie_reviews(df, debug=True, row_limit=limit)
+        #time.sleep(5)
+        #filter_agg_movie_reviews(df, debug=True, row_limit=limit)
+        #time.sleep(5)
+        #join_filter_movie_reviews(df, debug=True, row_limit=limit)
+        #time.sleep(5)
         topk_map_movie_reviews(df, debug=True, row_limit=limit)
         time.sleep(5)
         """        extract_movie_reviews(df, debug=True, row_limit=limit)
