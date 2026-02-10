@@ -24,18 +24,26 @@ class MockLM(lotus.models.LM):
             json.dump(self.cache, f)
 
     def hash_prompt(self, prompt):
-        if not isinstance(prompt, str):
-            prompt_str = json.dumps(prompt, sort_keys=True)
-        else:
-            prompt_str = prompt
+        def extract_text(obj):
+            if isinstance(obj, str):
+                return obj
+            if isinstance(obj, dict):
+                return " ".join(extract_text(v) for k, v in obj.items() if k in ["text", "content", "role"])
+            if isinstance(obj, list):
+                return " ".join(extract_text(item) for item in obj)
+            return str(obj)
 
-        return hashlib.md5(prompt_str.encode("utf-8")).hexdigest()
+        pure_text = extract_text(prompt)
+        normalized_text = " ".join(pure_text.split()).lower()
+
+        return hashlib.md5(normalized_text.encode("utf-8")).hexdigest()
 
     def __call__(self, prompts, **kwargs):
         responses = []
         new_data_recorded = False
 
         for p in prompts:
+            print(f"PROMPT: {p[:5]}")
             p_hash = self.hash_prompt(p)
 
             if p_hash in self.cache:
@@ -48,7 +56,7 @@ class MockLM(lotus.models.LM):
                 responses.append(real_response)
                 new_data_recorded = True
             else:
-                responses.append("MOCK_REPLAY_MISSING")
+                responses.append("1")
 
         if new_data_recorded:
             self.save_cache()

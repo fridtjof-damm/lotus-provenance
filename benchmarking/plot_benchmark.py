@@ -32,7 +32,7 @@ def ingest_raw_data_sql(db_path, raw_data_path):
     conn.execute("CREATE OR REPLACE TABLE results AS SELECT * FROM raw_data")
     # keep newest run in a view per n-iterations and rows processed
     conn.execute("""
-                CREATE VIEW IF NOT EXISTS latest_runs AS
+                CREATE OR REPLACE VIEW latest_runs AS
                 SELECT *
                 FROM results QUALIFY row_number() OVER (
                 PARTITION BY usecase_id, "metadata.n_rows", iterations 
@@ -87,6 +87,7 @@ def generate_plots_from_df(df):
     n_iters = df["iterations"].iloc[0]
     # dataset = df["function"].iloc[0].split("_", 1)[1] if "_" in df["function"].iloc[0] else "Data"
     n_rows = df["metadata.n_rows"].iloc[0]
+    system = df["metadata.system"].iloc[0]
 
     metrics = [
         ("wall_mean", "Wall Time (s)", "wall_std"),
@@ -141,7 +142,7 @@ def generate_plots_from_df(df):
 
         plt.tight_layout()
         Path("results/plots").mkdir(exist_ok=True)
-        plt.savefig(f"results/plots/plot_{metric_key}_{model.replace('/','-')}_{n_rows}.pdf", format="pdf")
+        plt.savefig(f"results/plots/plot_{metric_key}_{model.replace('/','-')}_{n_rows}_{system}.pdf", format="pdf")
         plt.show()
 
 
@@ -152,6 +153,6 @@ if __name__ == "__main__":
     ingest_raw_data_sql(db_path, raw_data_path)
     # 2. Gezielte Daten für den Plot abfragen (n_rows=10, iters=5)
 
-    filtered_df = get_run_data(db_path, 100, 3, "ollama/llama3.2:3b")
+    # filtered_df = get_run_data(db_path, 100, 3, "ollama/llama3.2:3b")
     # 3. Plotten
-    generate_plots_from_df(filtered_df)
+    # generate_plots_from_df(filtered_df)

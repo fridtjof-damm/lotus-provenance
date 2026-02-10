@@ -1641,6 +1641,11 @@ xml = [
     { name = "lxml" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "pre-commit" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "arxiv", marker = "extra == 'arxiv'" },
@@ -1682,6 +1687,9 @@ requires-dist = [
     { name = "weaviate-client", marker = "extra == 'weaviate'" },
 ]
 provides-extras = ["docs", "xml", "serpapi", "arxiv", "file-extractor", "weaviate", "qdrant", "data-connectors", "web-search", "dev"]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pre-commit", specifier = ">=4.4.0" }]
 
 [[package]]
 name = "lxml"

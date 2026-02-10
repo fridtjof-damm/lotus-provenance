@@ -17,6 +17,7 @@ from lotus.data_connectors import DataConnector
 
 BENCHMARKING_MODEL = "ollama/llama3.2:3b"
 BENCHMARKING_SYSTEM = ""
+REVIEW_TEXT_LEN = 200
 RUN_ID = str(uuid.uuid4())[:8]
 
 
@@ -93,12 +94,12 @@ def benchmark_provenance_overhead(usecase_id, n_iterations=3):
                 mems = [run["mem"] for run in raw_data[m]]
 
                 stats[m] = {
-                    "wall_mean": round(statistics.mean(walls), 4),
-                    "wall_std": round(statistics.stdev(walls), 4) if n_iterations > 1 else 0.0,
-                    "cpu_mean": round(statistics.mean(cpus), 4),
-                    "cpu_std": round(statistics.stdev(cpus), 4) if n_iterations > 1 else 0.0,
-                    "mem_mean": round(statistics.mean(mems), 2),
-                    "mem_std": round(statistics.stdev(mems), 2) if n_iterations > 1 else 0.0,
+                    "wall_mean": round(statistics.mean(walls), 6),
+                    "wall_std": round(statistics.stdev(walls), 6) if n_iterations > 1 else 0.0,
+                    "cpu_mean": round(statistics.mean(cpus), 6),
+                    "cpu_std": round(statistics.stdev(cpus), 6) if n_iterations > 1 else 0.0,
+                    "mem_mean": round(statistics.mean(mems), 4),
+                    "mem_std": round(statistics.stdev(mems), 4) if n_iterations > 1 else 0.0,
                 }
 
             log_entry = {
@@ -114,6 +115,7 @@ def benchmark_provenance_overhead(usecase_id, n_iterations=3):
                     "dataset": dataset_name,
                     "mock_lm": True,
                     "system": BENCHMARKING_SYSTEM,
+                    "text_len": REVIEW_TEXT_LEN,
                 },
             }
 
@@ -166,10 +168,10 @@ def print_summary(func_name, stats, n_iterations):
     v, p = stats["vanilla"], stats["provenance"]
     print(f"\n---- Benchmark: {func_name} (Avg over {n_iterations} runs) ----")
     print(
-        f"Wall Time: {v['wall_mean']:.2f}s vs {p['wall_mean']:.2f}s | OH: {(p['wall_mean'] / v['wall_mean']) - 1:+.2%}"
+        f"Wall Time: {v['wall_mean']:.6f}s vs {p['wall_mean']:.2f}s | OH: {(p['wall_mean'] / v['wall_mean']) - 1:+.2%}"
     )
-    print(f"CPU Time:  {v['cpu_mean']:.2f}s vs {p['cpu_mean']:.2f}s | OH: {(p['cpu_mean'] / v['cpu_mean']) - 1:+.2%}")
-    print(f"Memory:    {v['mem_mean']:.2f}MB vs {p['mem_mean']:.2f}MB | OH: {(p['mem_mean'] / v['mem_mean']) - 1:+.2%}")
+    print(f"CPU Time:  {v['cpu_mean']:.6f}s vs {p['cpu_mean']:.2f}s | OH: {(p['cpu_mean'] / v['cpu_mean']) - 1:+.2%}")
+    print(f"Memory:    {v['mem_mean']:.4f}MB vs {p['mem_mean']:.2f}MB | OH: {(p['mem_mean'] / v['mem_mean']) - 1:+.2%}")
 
 
 # ==========================================
@@ -181,58 +183,75 @@ def print_summary(func_name, stats, n_iterations):
 # ==========================================
 
 
-@benchmark_provenance_overhead(usecase_id="01-UC-EXTRACT-FILTER", n_iterations=50)
+@benchmark_provenance_overhead(usecase_id="01-UC-EXTRACT-FILTER-MAP-AGG", n_iterations=50)
 def extract_filter_movie_reviews(df, use_prov=False, debug=False):
     """
     01:
     SQL Use case with sem_extract and sem_filter on movie reviews dataset.
     Depends on sqlite file in created in db_examples/sql_extract_filter.py
-    """
-    # setup
 
-    # define extract parameters
+    Steps:
+    1. sem_extract: Extract key aspects of the movie discussed in the review.
+    2. sem_filter: Filter reviews where the key aspects are positive regarding the movie production
+    3. sem_map: Classify the key aspects into: Technical, Narrative, Acting or Other.
+    4. sem_filter + sem_agg: Filter for Technical category and aggregate recurring technical highlights in these reviews.
+
+    """
     input_cols = ["review"]
     output_cols = {"key_aspects": "The key aspect of the movie discussed in the review."}
 
-    # run sem_ops transform
     extracted_df = df.sem_extract(input_cols, output_cols, provenance=use_prov)
-    filtered_extracted_df = extracted_df.sem_filter(
-        "{key_aspects} are positive regarding the movie production.", provenance=use_prov
+    filtered_df = extracted_df.sem_filter("{key_aspects} is a meaningful description.", provenance=use_prov)
+    mapped_df = filtered_df.sem_map(
+        "Classify the {key_aspects} into exactly: 'Content' or 'Other'. Respond with ONLY the word.",
+        suffix="category",
+        provenance=use_prov,
     )
-    if debug:
-        print(filtered_extracted_df.head())
 
+    filtered_2_df = mapped_df.sem_filter("{category} is 'Content'", provenance=use_prov)
 
-@benchmark_provenance_overhead(usecase_id="02-UC-FILTER-AGG", n_iterations=50)
-def filter_agg_movie_reviews(df, use_prov=False, debug=False):
-    bench_df = df.sem_filter("{review} mentions cinematography or visual style in detail", provenance=use_prov).sem_agg(
-        "Summarize the common visual critiques found in these {review}s", provenance=use_prov
-    )
+    bench_df = filtered_2_df.sem_agg("Summarize the {key_aspects} of these {review}s?", provenance=use_prov)
+
     if debug:
         print(bench_df.head())
 
 
-@benchmark_provenance_overhead(usecase_id="03-UC-JOIN-FILTER", n_iterations=50)
+@benchmark_provenance_overhead(usecase_id="02-UC-FILTER-TOPK-EXTRACT-AGG", n_iterations=50)
+def filter_agg_movie_reviews(df, use_prov=False, debug=False):
+    filtered_df = df.sem_filter("{review} discusses the films quality, acting, or direction", provenance=use_prov)
+    top_k_df = filtered_df.sem_topk("Which {review} is the most descriptive?", K=5, provenance=use_prov)
+    extracted_df = top_k_df.sem_extract(
+        ["review"], {"visual_flaws": "List any visual flaws mentioned."}, provenance=use_prov
+    )
+    bench_df = extracted_df.sem_agg(
+        "Summarize the common visual critiques and specific flaws found in these {review}s", provenance=use_prov
+    )
+
+    if debug:
+        print(bench_df.head())
+
+
+@benchmark_provenance_overhead(usecase_id="03-UC-JOIN-EXTRACT-FILTER", n_iterations=50)
 def join_filter_movie_reviews(df, use_prov=False, debug=False):
-    categories = {
-        "category": [
-            "technical and analytical",
-            "emotional and subjective",
-            "humorous and sarcastic",
-            "brief and casual",
-            "professional film criticism",
-        ]
-    }
-    categories = pd.DataFrame(categories)
+    categories = pd.DataFrame({"category": ["technical and analytical", "emotional and subjective"]})
+
     joined_df = df.sem_join(
         categories, "{review} primarily falls under the {category} style of writing", provenance=use_prov
     )
-    filtered = joined_df.sem_filter("The {review} expresses a negative sentiment toward the film", provenance=use_prov)
+    extracted_df = joined_df.sem_extract(
+        ["review", "category"],
+        {"style_evidence": "Short qoute from the review that proves it is {category}."},
+        provenance=use_prov,
+    )
+    bench_df = extracted_df.sem_filter(
+        "{review} expresses a negative sentiment toward the film", provenance=use_prov
+    ).sem_filter("{style_evidence} is longer than 3 words.", provenance=use_prov)
+
     if debug:
-        print(filtered.head())
+        print(bench_df.head())
 
 
-@benchmark_provenance_overhead(usecase_id="04-UC-TOPK-MAP", n_iterations=50)
+@benchmark_provenance_overhead(usecase_id="04-UC-TOPK-MAP-JOIN-AGG", n_iterations=50)
 def topk_map_movie_reviews(df, use_prov=False, debug=False):
     top_reviews = df.sem_topk("Which {review} shows the most extreme positive enthusiasm?", K=5, provenance=use_prov)
     reasoned_reviews = top_reviews.sem_map(
@@ -240,8 +259,16 @@ def topk_map_movie_reviews(df, use_prov=False, debug=False):
         suffix="Extracted_Keywords",
         provenance=use_prov,
     )
+    audiences = pd.DataFrame({"target_audience": ["Cinephiles", "Mainstream Popcorn Fans"]})
+    profiled_df = reasoned_reviews.sem_join(
+        audiences, "Would a {target_audience} member use the keywords {Extracted_Keywords}?", provenance=use_prov
+    )
+    bench_df = profiled_df.sem_agg(
+        "What defines the vocabulary of joy for different {target_audience}s?", provenance=use_prov
+    )
+
     if debug:
-        print(reasoned_reviews.head())
+        print(bench_df.head())
 
 
 # ==========================================
@@ -279,7 +306,7 @@ def agg_movie_reviews(df, use_prov=False, debug=True):
         print(summary.head())
 
 
-#@benchmark_provenance_overhead(usecase_id="08-UC-JOIN", n_iterations=50)
+@benchmark_provenance_overhead(usecase_id="08-UC-JOIN", n_iterations=50)
 def join_movie_reviews(df, use_prov=False, debug=True):
     df_categories = pd.DataFrame(
         {
@@ -323,7 +350,7 @@ def map_movie_reviews(df, use_prov=False, debug=False):
         print(mapped.head())
 
 
-@benchmark_provenance_overhead(usecase_id="10-UC-TOPK", n_iterations=1)
+@benchmark_provenance_overhead(usecase_id="10-UC-TOPK", n_iterations=50)
 def top_k_movie_reviews(df, use_prov=False, debug=False):
     topk = df.sem_topk(
         "Rank by strongest positive enthusiasm and excitement.\n"
@@ -342,14 +369,14 @@ if __name__ == "__main__":
     df = get_data_sql("sqlite:///../examples/db_examples/imdb_reviews.db")
     row_limits = [100, 500]
     for limit in row_limits:
-        """        extract_filter_movie_reviews(df, debug=True, row_limit=limit)
-                time.sleep(5)
-                filter_agg_movie_reviews(df, debug=True, row_limit=limit)
-                time.sleep(5)
-                join_filter_movie_reviews(df, debug=True, row_limit=limit)
-                time.sleep(5)
-                topk_map_movie_reviews(df, debug=True, row_limit=limit)
-                time.sleep(5)"""
+        extract_filter_movie_reviews(df, debug=True, row_limit=limit)
+        time.sleep(5)
+        filter_agg_movie_reviews(df, debug=True, row_limit=limit)
+        time.sleep(5)
+        join_filter_movie_reviews(df, debug=True, row_limit=limit)
+        time.sleep(5)
+        topk_map_movie_reviews(df, debug=True, row_limit=limit)
+        time.sleep(5)
         extract_movie_reviews(df, debug=True, row_limit=limit)
         time.sleep(5)
         filter_movie_reviews(df, debug=True, row_limit=limit)
@@ -359,9 +386,4 @@ if __name__ == "__main__":
         join_movie_reviews(df, debug=True, row_limit=limit)
         time.sleep(5)
         map_movie_reviews(df, debug=True, row_limit=limit)
-        time.sleep(5)
-        """
-        top_k_movie_reviews(df, debug=True, row_limit=5)
-        joined_result = join_movie_reviews(df[:10],use_prov=True,debug=True)
-        joined_result.to_csv("join_result.csv", index=False)"""
-
+        top_k_movie_reviews(df, debug=True, row_limit=limit)
